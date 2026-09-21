@@ -92,10 +92,11 @@ services:
   omniroute:
     <<: *common
     container_name: omniroute
-    # Dokploy runs on a small VPS, so use the prebuilt amd64-capable release
-    # image instead of compiling Next.js on the production host. The digest is
-    # immutable; update it deliberately after validating a newer upstream image.
-    image: docker.io/diegosouzapw/omniroute@sha256:80eade3c516c4b4e0b9ab07a72a96648155722fbf311cfb4bc058cc4d1e18b3a
+    # Dokploy runs on a small VPS, so use the prebuilt image already cached on
+    # the host instead of compiling Next.js or extracting a second large image
+    # on the production server. CI can replace this tag with the fork image once
+    # GitHub Actions is available for the fork.
+    image: docker.io/diegosouzapw/omniroute:latest
     ports:
       # Loopback-only by default (#12568): with REQUIRE_API_KEY=false shipping
       # as the .env.example default, an unqualified publish spec here binds
