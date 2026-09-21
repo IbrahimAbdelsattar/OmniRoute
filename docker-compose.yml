@@ -92,12 +92,10 @@ services:
   omniroute:
     <<: *common
     container_name: omniroute
-    build:
-      context: .
-      target: runner-base
-      args:
-        OMNIROUTE_BASE_PATH: ${OMNIROUTE_BASE_PATH:-}
-    image: omniroute:base
+    # Dokploy runs on a small VPS, so use the prebuilt amd64-capable release
+    # image instead of compiling Next.js on the production host. The digest is
+    # immutable; update it deliberately after validating a newer upstream image.
+    image: docker.io/diegosouzapw/omniroute@sha256:80eade3c516c4b4e0b9ab07a72a96648155722fbf311cfb4bc058cc4d1e18b3a
     ports:
       # Loopback-only by default (#12568): with REQUIRE_API_KEY=false shipping
       # as the .env.example default, an unqualified publish spec here binds
