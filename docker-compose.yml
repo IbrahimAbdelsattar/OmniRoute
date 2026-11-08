@@ -97,7 +97,7 @@ services:
     # the host instead of compiling Next.js or extracting a second large image
     # on the production server. CI can replace this tag with the fork image once
     # GitHub Actions is available for the fork.
-    image: diegosouzapw/omniroute:3.8.53
+    image: diegosouzapw/omniroute:3.8.53-web
     ports:
       # Loopback-only by default (#12568): with REQUIRE_API_KEY=false shipping
       # as the .env.example default, an unqualified publish spec here binds
