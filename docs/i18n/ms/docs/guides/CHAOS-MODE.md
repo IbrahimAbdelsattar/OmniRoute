@@ -4,42 +4,60 @@
 
 ---
 
-> **Papan Pemuka:** **Mod Chaos** (bar sisi) → `/dashboard/chaos`  
+> **Papan pemuka:** **Mod Chaos** (bar sisi) → `/dashboard/chaos`  
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (sesi papan pemuka) · `POST /api/skills/collect/chaos` (kunci API)  
 > **Sumber:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Mod Chaos menghantar **satu tugasan kepada beberapa penyedia serentak** — setiap penyedia yang mengambil bahagian
-menyumbangkan satu tika model dan anda memperoleh semua jawapan secara bersebelahan (atau dirantaikan). Ia ialah
-permukaan pelaksanaan berbilang model, bukannya strategi penghalaan: trafik biasa `/v1/chat/completions`
-anda tidak pernah dipengaruhi olehnya.
+Mod Chaos menghantar **satu tugasan kepada beberapa penyedia serentak** — setiap penyedia yang mengambil bahagian menyumbangkan satu tika model dan anda mendapat semua jawapan secara bersebelahan (atau dirantaikan). Ia merupakan permukaan pelaksanaan berbilang model, bukan strategi penghalaan: trafik `/v1/chat/completions` biasa anda tidak akan terjejas olehnya.
 
-**Penjelasan — tiga perkara berbeza disertakan dengan "chaos" dalam namanya:**
+**Penjelasan — terdapat tiga perkara berbeza yang menggunakan "chaos" dalam namanya:**
 
-| Perkara                 | Perihal                                                                                                                      | Tempat didokumentasikan                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Mod Chaos**           | Halaman papan pemuka + API yang diterangkan di sini: agihkan satu tugasan kepada banyak penyedia (selari atau kolaboratif).  | Panduan ini                                  |
-| `auto/chaos`            | ID model Auto-Combo dengan pemberat pemarkahan suntikan kegagalan untuk ujian daya tahan. Tiada apa-apa untuk dikonfigurasi. | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Konfigurasi kombo Chaos | Kombo tersimpan dengan `config.chaos.enabled` mengagihkan tugasan kepada panel dengan model penilai pilihan (API sahaja).    | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Perkara                 | Maksudnya                                                                                                                                                                      | Tempat didokumentasikan                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Mod Chaos**           | Halaman papan pemuka + API yang diterangkan di sini: sebarkan satu tugasan kepada banyak penyedia (secara selari atau kolaboratif).                                            | Panduan ini                                  |
+| `auto/chaos`            | ID model Auto-Combo: penyebaran selari, satu model bagi setiap penyedia, satu panggilan huluan setiap satu. Bukan suntikan kegagalan ([butiran](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Konfigurasi kombo Chaos | Kombo tersimpan dengan `config.chaos.enabled` menyebarkan permintaan dengan cara yang sama (API sahaja); `judgeModel` hanya memilih jawapan akhir, tanpa panggilan sintesis.   | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`: penyebaran selari
+
+`auto/chaos` **bukan** tombol suntikan kegagalan atau ujian daya tahan. Meminta
+`model: "auto/chaos"` pada `/v1/chat/completions`:
+
+1. Membina panel yang terdiri daripada **satu model bagi setiap penyedia**: calon pertama bagi setiap
+   penyedia yang disambungkan, mengikut tertib kelompok calon, sehingga 5 ahli
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, dihadkan pada 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Pek pemberat `chaos-mode`
+   hanya menetapkan `weight` setiap ahli; penyebaran tidak membacanya.
+2. Menghantar permintaan yang sama kepada setiap ahli panel **secara selari**, maka satu permintaan
+   melibatkan satu panggilan huluan bagi setiap ahli panel
+   (`open-sse/services/autoCombo/chaosEngine.ts`, dihantar daripada
+   `open-sse/services/combo.ts`).
+3. Menstrim satu baris status bagi setiap ahli panel sebaik sahaja hasilnya tiba: ulasan SSE
+   (`: chaos <index> ok|fail <model>`) secara lalai, serta peristiwa `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) apabila permintaan menetapkan
+   `stream_options.include_chaos_parts: true`. Semua ini tidak mengandungi teks jawapan.
+4. Menghantar **satu** jawapan panel sebagai cebisan akhir bergaya OpenAI: jawapan ahli panel
+   pertama (`auto/chaos` menetapkannya sebagai `judgeModel`) apabila berjaya, atau
+   jawapan ahli terakhir yang berjaya jika tidak. Jawapan ahli panel lain tidak dikembalikan, jadi
+   anda membayar untuk N panggilan dan menerima satu pelengkapan.
 
 ## Persediaan
 
-1. Buka **Papan Pemuka → Mod Chaos** (`/dashboard/chaos`).
-2. **Aktifkannya** — Mod Chaos disediakan dalam keadaan **dinyahdayakan secara lalai** (`enabled: false` dalam
-   `src/lib/chaos/chaosConfig.ts`). Semasa dinyahdayakan, `POST /api/chaos/run` memberikan respons
-   `400 — "Mod Chaos tidak didayakan. Dayakannya dalam Papan Pemuka → Mod Chaos."`.
-3. Pilih peserta dan nilai lalai (disimpan bagi setiap tika melalui stor tetapan):
+1. Buka** Papan pemuka → Mod Chaos** (`/dashboard/chaos`).
+2. Pusingkan ia** pada** — Chaos Mode dihantar** dilumpuhkan secara lalai** (`enabled: false` dalam `src/lib/chaos/chaosConfig.ts`). Semasa dilumpuhkan, `POST /api/chaos/run` menjawab `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Pilih peserta dan lalai (berterusan setiap contoh melalui kedai tetapan):
 
-   | Medan               | Maksud                                                                    | Lalai / had                                  |
-   | ------------------- | ------------------------------------------------------------------------- | -------------------------------------------- |
-   | `enabled`           | Suis utama                                                                | `false`                                      |
-   | `defaultMode`       | `parallel` atau `collaborative` (lihat di bawah)                          | `parallel`                                   |
-   | `providerOverrides` | Penyertaan mengikut penyedia (`providerId`, `modelId` pilihan, `enabled`) | kosong = setiap penyedia aktif, maksimum 200 |
-   | `systemPrompt`      | Gantian bagi prom sistem Chaos terbina dalam                              | pilihan, maksimum 10 000 aksara              |
-   | `timeoutMs`         | Masa maksimum bagi setiap panggilan model                                 | `120000` (5 000–600 000)                     |
-   | `maxTokens`         | `max_tokens` bagi setiap panggilan model                                  | `4096` (256–128 000)                         |
+   | Padang              | Maknanya                                                                 | Lalai / had                              |
+   | ------------------- | ------------------------------------------------------------------------ | ---------------------------------------- |
+   | `enabled`           | Suis induk                                                               | `false`                                  |
+   | `defaultMode`       | `parallel` atau `collaborative` (lihat di bawah)                         | `parallel`                               |
+   | `providerOverrides` | Penyertaan setiap penyedia (`providerId`, `modelId` pilihan , `enabled`) | = kosong setiap pembekal aktif, maks 200 |
+   | `systemPrompt`      | Gantikan untuk gesaan sistem Chaos terbina dalam                         | pilihan, maks 10 000 aksara              |
+   | `timeoutMs`         | Masa maksimum bagi setiap panggilan model                                | `120000` (5 000–600 000)                 |
+   | `maxTokens`         | `max_tokens` setiap panggilan model                                      | `4096` (256–128 000)                     |
 
-4. Jalankan **ujian daripada halaman itu sendiri** — panel hasil menunjukkan jawapan,
-   status dan tempoh setiap penyedia.
+4. Beri setiap penyedia yang mengambil bahagian a** model** . Model pembekal ialah `modelId` bagi penggantian yang didayakan pada halaman Mod Chaos (ia menang), jika tidak,** model lalai** perkaitannya. Id pembekal tidak pernah digunakan sebagai nama model. Pembekal tanpa kedua-duanya** tidak dipanggil** : ia muncul dalam keputusan sebagai `status: "error"` dengan mesej _"Tiada model ditetapkan untuk pembekal ini. Tetapkan model untuknya pada halaman Mod Huru-hara atau model lalai pada sambungan."_ dan `modelId` kosong, manakala pembekal lain berjalan seperti biasa. Jika tiada pembekal terpilih mempunyai model, larian gagal sebelum sebarang permintaan huluan dengan _"Tiada pembekal mempunyai set model. …"_ (HTTP 500 pada kedua-dua titik akhir).
+5. Lari a** ujian dari halaman itu sendiri** — panel keputusan menunjukkan jawapan, status dan tempoh setiap pembekal.
 
 ## Mod pelaksanaan
 
@@ -51,36 +69,33 @@ anda tidak pernah dipengaruhi olehnya.
 
 ## API
 
-### `POST /api/chaos/run` — sesi papan pemuka
+### sesi papan pemuka `POST /api/chaos/run` —
 
-Disahkan melalui kuki (sesi pengurusan — lihat
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); digunakan oleh halaman papan pemuka.
+Kuki-disahkan (sesi pengurusan — lihat [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); digunakan oleh halaman papan pemuka.
 
 ```jsonc
-// badan
+// body
 {
-  "task": "Bandingkan pendekatan terhadap X", // wajib
-  "providers": ["glm", "kimi"], // penapis pilihan
-  "mode": "parallel", // pilihan — mengatasi defaultMode
-  "systemPrompt": "…", // gantian pilihan
-  "maxTokens": 4096, // gantian pilihan
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — kunci API
+### kunci `POST /api/skills/collect/chaos` — API
 
-Varian token pembawa untuk pemanggil luaran. Kunci tersebut mesti mempunyai **kebenaran Mod Chaos**
-(`chaosModeEnabled`), yang **dimatikan secara lalai** — dayakannya bagi setiap kunci dalam
-**Papan Pemuka → Pengurus API → edit kunci → kebenaran → Mod Chaos**. Badannya sama seperti di atas.
+Varian token pembawa untuk pemanggil luar. Kunci mesti membawa** Kebenaran Mod Chaos** (`chaosModeEnabled`), iaitu** dimatikan secara lalai** — dayakannya setiap kekunci masuk** Papan pemuka → API Pengurus → edit kekunci → kebenaran → Mod Huru-hara** . Badan yang sama seperti di atas.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -H "Authorization: Bearer $OMNIROUTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"task":"Bandingkan pendekatan terhadap X","mode":"parallel"}'
+  -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Kedua-dua titik akhir mengembalikan struktur yang sama:
+Kedua-dua titik akhir mengembalikan bentuk yang sama:
 
 ```jsonc
 {
@@ -99,15 +114,13 @@ Kedua-dua titik akhir mengembalikan struktur yang sama:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // mod kolaboratif sahaja
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## Penyelesaian masalah
+## Menyelesaikan masalah
 
 - **`400 Chaos Mode is not enabled`** — langkah 2 di atas: suis global dimatikan.
-- **Kunci API ditolak pada `/api/skills/collect/chaos`** — kunci tersebut tidak mempunyai kebenaran khusus kunci
-  `chaosModeEnabled` (dimatikan secara lalai; ini ialah tetapan, bukannya ralat).
-- **Penyedia yang anda jangkakan tidak muncul dalam hasil** — semak `providerOverrides` pada halaman
-  Mod Chaos (gantian yang dinyahdayakan akan mengecualikannya) dan sama ada sambungan penyedia tersebut
-  aktif.
+- **kunci API ditolak pada `/api/skills/collect/chaos`** — kekunci tidak mempunyai kebenaran `chaosModeEnabled` per kekunci (dimatikan secara lalai; ini adalah tetapan, bukan ralat).
+- **Pembekal menunjukkan `No model set for this provider`** — menetapkan modelnya pada halaman Mod Chaos atau model lalai pada sambungannya (lihat Persediaan, langkah 4).
+- **Pembekal yang anda jangkakan tiada daripada hasilnya** — semak `providerOverrides` pada halaman Mod Huru-hara (penggantian yang dilumpuhkan mengecualikannya) dan sama ada sambungan pembekal aktif.

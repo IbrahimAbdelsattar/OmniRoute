@@ -8,33 +8,56 @@
 > **API：** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run`（儀表板工作階段）· `POST /api/skills/collect/chaos`（API 金鑰）  
 > **原始碼：** `src/lib/chaos/chaosExecutor.ts`、`src/lib/chaos/chaosConfig.ts`
 
-Chaos Mode 會將**一項任務同時傳送給多個提供者**——每個參與的提供者都會貢獻一個模型執行個體，而您可以並排取得所有答案（或將它們串連起來）。這是一個多模型執行介面，而非路由策略：您的一般 `/v1/chat/completions` 流量絕不會受到影響。
+Chaos Mode 會將**一項任務同時傳送給多個提供者**——每個參與的提供者都會貢獻一個模型執行個體，而您可以並排（或串連）取得所有答案。這是一個多模型執行介面，而不是路由策略：您一般的 `/v1/chat/completions` 流量絕不會受到影響。
 
-**釐清——產品中有三種名稱包含「chaos」但彼此不同的功能：**
+**釐清——產品中有三種不同的項目名稱包含「chaos」：**
 
-| 項目           | 說明                                                                                                           | 文件位置                                     |
-| -------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode** | 本文所述的儀表板頁面與 API：將一項任務分派給多個提供者（平行或協作執行）。                                     | 本指南                                       |
-| `auto/chaos`   | 一個使用故障注入評分權重的 Auto-Combo 模型 ID，用於韌性測試。無需進行任何設定。                                | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos 組合設定 | 一個已持久化的組合，其中 `config.chaos.enabled` 會將任務分派給一組模型，並可選擇性地使用裁判模型（僅限 API）。 | `open-sse/services/autoCombo/chaosEngine.ts` |
+| 項目           | 說明                                                                                                                                  | 文件位置                                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode** | 此處所述的儀表板頁面與 API：將一項任務分發給多個提供者（平行或協作執行）。                                                            | 本指南                                       |
+| `auto/chaos`   | Auto-Combo 模型 ID：平行分發，每個提供者使用一個模型，且各自進行一次上游呼叫。這不是故障注入（[詳情](#autochaos-parallel-fan-out)）。 | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Chaos 組合設定 | 啟用 `config.chaos.enabled` 的持久化組合會以相同方式分發（僅限 API）；`judgeModel` 只會選取最終答案，不會進行綜合呼叫。               | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`：平行分發
+
+`auto/chaos` **不是**故障注入或韌性測試的控制項。在 `/v1/chat/completions` 上請求
+`model: "auto/chaos"` 時：
+
+1. 建立一個由**每個提供者各一個模型**組成的面板：按照候選集順序，選取每個
+   已連線提供者的第一個候選模型，最多 5 個成員
+   （`OMNIROUTE_CHAOS_MAX_PANEL`，上限為 10）
+   （`open-sse/services/autoCombo/virtualFactory.ts`）。`chaos-mode` 權重
+   套件只會設定每個成員的 `weight`；分發操作不會讀取它。
+2. 將相同請求**平行**傳送給每個面板成員，因此一次請求會針對每個面板成員
+   產生一次上游呼叫
+   （`open-sse/services/autoCombo/chaosEngine.ts`，由
+   `open-sse/services/combo.ts` 分派）。
+3. 當每個面板成員的結果抵達時，串流傳送一行狀態：預設為 SSE 註解
+   （`: chaos <index> ok|fail <model>`）；若請求設定
+   `stream_options.include_chaos_parts: true`，則還會傳送 `omni-chaos-part`
+   事件（`model`、`index`、`ok`、`error`）。這些內容不包含答案文字。
+4. 將**一個**面板答案作為最終的 OpenAI 風格區塊傳送：若第一個面板
+   成員（`auto/chaos` 會將其設為 `judgeModel`）成功，便採用其答案；否則
+   採用最後一個成功成員的答案。其他面板答案不會回傳，因此您需支付 N 次
+   呼叫的費用，卻只會收到一個補全結果。
 
 ## 設定
 
-1. 開啟 **儀表板 → Chaos Mode**（`/dashboard/chaos`）。
-2. 將其**開啟**——Chaos Mode 預設為**停用**（`src/lib/chaos/chaosConfig.ts` 中的 `enabled: false`）。停用時，`POST /api/chaos/run` 會回應
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`。
-3. 選擇參與者與預設值（透過設定儲存區按執行個體持久化）：
+1. 打開**儀表板→混沌模式**（`/dashboard/chaos`）。
+2. 轉動它**在**—混沌模式船**預設禁用**（`enabled: false`中的`src/lib/chaos/chaosConfig.ts`）。停用時， `POST /api/chaos/run`會應答`400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`。
+3. 選擇參與者和預設值（透過設定儲存保留每個實例）：
 
-   | 欄位                | 含義                                                            | 預設值／限制                           |
-   | ------------------- | --------------------------------------------------------------- | -------------------------------------- |
-   | `enabled`           | 總開關                                                          | `false`                                |
-   | `defaultMode`       | `parallel` 或 `collaborative`（請參閱下文）                     | `parallel`                             |
-   | `providerOverrides` | 各提供者的參與設定（`providerId`、選用的 `modelId`、`enabled`） | 空值 = 每個啟用中的提供者，上限 200 個 |
-   | `systemPrompt`      | 覆寫內建的 Chaos 系統提示詞                                     | 選用，最多 10 000 個字元               |
-   | `timeoutMs`         | 每次模型呼叫的最長時間                                          | `120000`（5 000–600 000）              |
-   | `maxTokens`         | 每次模型呼叫的 `max_tokens`                                     | `4096`（256–128 000）                  |
+   | 場地                | 意義                                                        | 預設/限制                         |
+   | ------------------- | ----------------------------------------------------------- | --------------------------------- |
+   | `enabled`           | 主開關                                                      | `false`                           |
+   | `defaultMode`       | `parallel`或`collaborative` （見下文）                      | `parallel`                        |
+   | `providerOverrides` | 每個提供者的參與（`providerId`、可選`modelId`、 `enabled`） | 每個活躍提供者清空= ，最多 200 個 |
+   | `systemPrompt`      | 覆蓋內建混沌系統提示                                        | 可選，最多 10 000 個字符          |
+   | `timeoutMs`         | 每個模型呼叫的最長時間                                      | `120000` (5 000–600 000)          |
+   | `maxTokens`         | 每個模型呼叫的`max_tokens`                                  | `4096` (256–128 000)              |
 
-4. **直接從頁面執行測試**——結果面板會顯示每個提供者的答案、狀態與持續時間。
+4. 為每個參與的提供者提供**模型**。提供者的模型是其在混沌模式頁面上啟用的覆蓋的`modelId` （它獲勝），否則**預設型號**其連接。提供者 ID 永遠不會用作模型名稱。兩者都沒有的提供者是**沒有被呼叫**：它在結果中顯示為`status: "error"` ，並顯示訊息 _「沒有為此提供者設定模型。在混沌模式頁面上為其設定模型或連接上的預設模型。」_ 和一個空`modelId`，而其他提供者正常運作。如果沒有選定的提供者俱有模型，則在任何上游請求之前運行都會失敗，並顯示 _“沒有提供程序有模型集。...”_（兩個端點上的HTTP 500）。
+5. 運行一個**從頁面本身進行測試**—結果面板顯示每個提供者的答案、狀態和持續時間。
 
 ## 執行模式
 
@@ -43,26 +66,24 @@ Chaos Mode 會將**一項任務同時傳送給多個提供者**——每個參�
 
 ## API
 
-### `POST /api/chaos/run`——儀表板工作階段
+### `POST /api/chaos/run` —儀表板會話
 
-使用 Cookie 驗證（管理工作階段——請參閱
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)）；供儀表板頁面使用。
+Cookie 驗證（管理會話—參見[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ）；由儀表板頁面使用。
 
 ```jsonc
-// 請求主體
+// body
 {
-  "task": "Compare approaches to X", // 必填
-  "providers": ["glm", "kimi"], // 選填篩選條件
-  "mode": "parallel", // 選填——覆寫 defaultMode
-  "systemPrompt": "…", // 選填覆寫值
-  "maxTokens": 4096, // 選填覆寫值
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos`——API 金鑰
+### `POST /api/skills/collect/chaos` — API鑰
 
-供外部呼叫者使用的 Bearer 權杖版本。金鑰必須具有 **Chaos Mode 權限**（`chaosModeEnabled`），而該權限**預設為關閉**——請在
-**儀表板 → API Manager → 編輯金鑰 → 權限 → Chaos Mode** 中為各金鑰啟用。請求主體與上述相同。
+外部呼叫者的不記名令牌變體。鑰匙必須帶有**混沌模式權限**（`chaosModeEnabled`），即**預設關閉**—為每個鍵啟用它**儀表板→ API管理器→編輯金鑰→權限→混沌模式**。身體和上面一樣。
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -71,7 +92,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-兩個端點會傳回相同的結構：
+兩個端點傳回相同的形狀：
 
 ```jsonc
 {
@@ -90,12 +111,13 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // 僅限 collaborative 模式
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## 疑難排解
+## 故障排除
 
-- **`400 Chaos Mode is not enabled`**——請參閱上述步驟 2：全域開關目前為關閉狀態。
-- **API 金鑰在 `/api/skills/collect/chaos` 上遭拒絕**——該金鑰缺少個別金鑰的 `chaosModeEnabled` 權限（預設為關閉；這是設定問題，而非錯誤）。
-- **預期出現的提供者未列於結果中**——請檢查 Chaos Mode 頁面上的 `providerOverrides`（停用的覆寫設定會排除該提供者），以及提供者連線是否處於啟用狀態。
+- **`400 Chaos Mode is not enabled`** —上面第2步：全域開關關閉。
+- **API密鑰在`/api/skills/collect/chaos`上被拒絕**—該金鑰缺少每個金鑰的`chaosModeEnabled`權限（預設為關閉；這是一個設置，而不是錯誤）。
+- **提供者展示`No model set for this provider`** —在混沌模式頁面上設定其模型或在其連接上設定預設模型（請參閱設置，步驟 4）。
+- **結果中缺少您期望的提供者**—檢查混沌模式頁面上的`providerOverrides` （停用覆蓋排除它）以及提供者連線是否處於活動狀態。

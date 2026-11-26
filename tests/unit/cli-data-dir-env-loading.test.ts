@@ -93,6 +93,42 @@ test("CLI data-dir resolver preserves an existing legacy ~/.omniroute before XDG
   }
 });
 
+test("CLI startup can isolate an explicit DATA_DIR from the user's default secret env", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-cli-env-isolated-"));
+  const home = path.join(tmp, "home");
+  const dataDir = path.join(tmp, "data");
+  const cwd = path.join(tmp, "cwd");
+  const defaultDataDir = path.join(home, ".omniroute");
+  for (const directory of [dataDir, cwd, defaultDataDir]) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  fs.writeFileSync(path.join(dataDir, ".env"), "PORT=29999\n", "utf8");
+  fs.writeFileSync(path.join(defaultDataDir, ".env"), "OMNIROUTE_HTTP_TIMEOUT_MS=987654\n", "utf8");
+
+  try {
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.OMNIROUTE_HTTP_TIMEOUT_MS;
+    delete cleanEnv.STORAGE_ENCRYPTION_KEY;
+    const current = readCliEnvShow(
+      {
+        ...cleanEnv,
+        DATA_DIR: dataDir,
+        HOME: home,
+        USERPROFILE: home,
+        CI: "1",
+        OMNIROUTE_CLI_SKIP_DEFAULT_DATA_ENV: "1",
+        OMNIROUTE_CLI_SKIP_REPO_ENV: "1",
+        OMNIROUTE_NO_UPDATE_NOTIFIER: "1",
+      },
+      cwd
+    );
+    assert.equal(current.PORT, "29999");
+    assert.equal(current.OMNIROUTE_HTTP_TIMEOUT_MS, undefined);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test("CLI startup loads later non-conflicting .env files without overriding earlier values", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-cli-env-layers-"));
   const home = path.join(tmp, "home");
@@ -122,7 +158,9 @@ test("CLI startup loads later non-conflicting .env files without overriding earl
     );
     fs.writeFileSync(
       path.join(cwd, ".env"),
-      ["OMNIROUTE_BASE_URL=https://cwd.example/v1", "PORT=34567", ""].join("\n"),
+      ["OMNIROUTE_BASE_URL=https://cwd.example/v1", "PORT=34567", "REQUIRE_API_KEY=true", ""].join(
+        "\n"
+      ),
       "utf-8"
     );
 
@@ -131,6 +169,7 @@ test("CLI startup loads later non-conflicting .env files without overriding earl
       "OMNIROUTE_BASE_URL",
       "OMNIROUTE_HTTP_TIMEOUT_MS",
       "PORT",
+      "REQUIRE_API_KEY",
       "STORAGE_ENCRYPTION_KEY",
     ]) {
       delete cleanEnv[key];
@@ -150,7 +189,10 @@ test("CLI startup loads later non-conflicting .env files without overriding earl
     const current = readCliEnvShow(env, cwd);
     assert.equal(current.OMNIROUTE_BASE_URL, "https://data.example/v1");
     assert.equal(current.OMNIROUTE_HTTP_TIMEOUT_MS, "1234");
-    assert.equal(current.PORT, "34567");
+    // The working-directory .env still fills keys it may set, but not the port
+    // the CLI talks to (bin/cli/utils/untrustedCwdEnv.mjs).
+    assert.equal(current.REQUIRE_API_KEY, "true");
+    assert.equal(current.PORT, undefined);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

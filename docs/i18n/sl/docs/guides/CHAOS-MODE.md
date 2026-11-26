@@ -4,42 +4,63 @@
 
 ---
 
-> **Nadzorna plošča:** **Chaos Mode** (stranska vrstica) → `/dashboard/chaos`  
+> **Nadzorna plošča:** **Način Chaos** (stranska vrstica) → `/dashboard/chaos`  
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (seja nadzorne plošče) · `POST /api/skills/collect/chaos` (ključ API)  
 > **Izvorna koda:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Chaos Mode pošlje **eno nalogo več ponudnikom hkrati** — vsak sodelujoči ponudnik
-prispeva en primerek modela, vse odgovore pa prejmete drugega ob drugem (ali povezane v verigo). To je
-vmesnik za izvajanje z več modeli in ne strategija usmerjanja: na vaš običajni promet
-`/v1/chat/completions` nikoli ne vpliva.
+Način Chaos pošlje **eno nalogo več ponudnikom hkrati** — vsak sodelujoči ponudnik
+prispeva en primerek modela, vse odgovore pa prejmete drugega ob drugem (ali verižno povezane). To je
+vmesnik za izvajanje z več modeli, ne strategija usmerjanja: vaš običajni promet
+`/v1/chat/completions` nanj nikoli ne vpliva.
 
-**Pojasnilo — z imenom »chaos« so na voljo tri različne stvari:**
+**Pojasnilo — tri različne stvari vsebujejo »chaos« v imenu:**
 
-| Stvar                           | Kaj je                                                                                                                                  | Kje je dokumentirana                         |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**                  | Tukaj opisana stran nadzorne plošče in API: razpošiljanje ene naloge več ponudnikom (vzporedno ali sodelovalno).                        | Ta vodnik                                    |
-| `auto/chaos`                    | ID modela Auto-Combo z utežmi ocenjevanja za vbrizgavanje napak, namenjen preizkušanju odpornosti. Konfiguracija ni potrebna.           | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Konfiguracija kombinacije Chaos | Shranjena kombinacija z `config.chaos.enabled`, ki nalogo razpošlje skupini modelov z izbirnim ocenjevalnim modelom (samo prek API-ja). | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Stvar                           | Kaj je                                                                                                                                                                         | Kje je dokumentirano                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Način Chaos**                 | Tukaj opisana stran nadzorne plošče in API: razpošiljanje ene naloge več ponudnikom (vzporedno ali sodelovalno).                                                               | Ta vodnik                                    |
+| `auto/chaos`                    | ID modela Auto-Combo: vzporedno razpošiljanje, en model na ponudnika, po en klic navzgor za vsakega. Ne gre za vstavljanje napak ([podrobnosti](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Konfiguracija kombinacije Chaos | Trajno shranjena kombinacija z `config.chaos.enabled` razpošilja na enak način (samo prek API-ja); `judgeModel` zgolj izbere končni odgovor, brez klica za sintezo.            | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`: vzporedno razpošiljanje
+
+`auto/chaos` **ni** nastavitev za vstavljanje napak ali preizkušanje odpornosti. Zahteva z
+`model: "auto/chaos"` na `/v1/chat/completions`:
+
+1. Sestavi nabor **enega modela na ponudnika**: prvega kandidata vsakega
+   povezanega ponudnika, v vrstnem redu nabora kandidatov, z največ 5 člani
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, omejeno na največ 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Paket uteži `chaos-mode`
+   nastavi samo `weight` vsakega člana; razpošiljanje te vrednosti ne bere.
+2. Pošlje isto zahtevo vsakemu članu nabora **vzporedno**, zato ena zahteva
+   povzroči en klic navzgor na vsakega člana nabora
+   (`open-sse/services/autoCombo/chaosEngine.ts`, odpremljeno iz
+   `open-sse/services/combo.ts`).
+3. Ob prispetju pretaka po eno vrstico stanja za vsakega člana nabora: privzeto
+   komentar SSE (`: chaos <index> ok|fail <model>`), dodatno pa dogodek `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`), ko zahteva nastavi
+   `stream_options.include_chaos_parts: true`. Ti ne vsebujejo besedila odgovora.
+4. Pošlje **en** odgovor nabora kot končni kos v slogu OpenAI: odgovor prvega
+   člana nabora (`auto/chaos` ga nastavi kot `judgeModel`), če je uspešen, sicer
+   odgovor zadnjega uspešnega člana. Drugi odgovori nabora niso vrnjeni, zato
+   plačate za N klicev in prejmete en dokončan odgovor.
 
 ## Nastavitev
 
-1. Odprite **Nadzorna plošča → Chaos Mode** (`/dashboard/chaos`).
-2. Funkcijo **vklopite** — Chaos Mode je ob namestitvi **privzeto onemogočen** (`enabled: false` v
-   `src/lib/chaos/chaosConfig.ts`). Ko je onemogočen, `POST /api/chaos/run` vrne
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Izberite sodelujoče ponudnike in privzete nastavitve (shranjene za posamezen primerek prek shrambe nastavitev):
+1. Odpri** Nadzorna plošča → Chaos Mode** (`/dashboard/chaos`).
+2. Obrni ga** na** — Chaos Mode ladje** privzeto onemogočeno** (`enabled: false` v `src/lib/chaos/chaosConfig.ts`). Ko je onemogočen, `POST /api/chaos/run` odgovarja `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Izberite udeležence in privzete vrednosti (trajajo za vsak primerek prek shrambe nastavitev):
 
-   | Polje               | Pomen                                                                          | Privzeto / omejitve                        |
-   | ------------------- | ------------------------------------------------------------------------------ | ------------------------------------------ |
-   | `enabled`           | Glavno stikalo                                                                 | `false`                                    |
-   | `defaultMode`       | `parallel` ali `collaborative` (glejte spodaj)                                 | `parallel`                                 |
-   | `providerOverrides` | Sodelovanje posameznega ponudnika (`providerId`, izbirni `modelId`, `enabled`) | prazno = vsak aktiven ponudnik, največ 200 |
-   | `systemPrompt`      | Nadomestitev vgrajenega sistemskega poziva Chaos                               | izbirno, največ 10.000 znakov              |
-   | `timeoutMs`         | Najdaljši čas posameznega klica modela                                         | `120000` (5.000–600.000)                   |
-   | `maxTokens`         | `max_tokens` za posamezen klic modela                                          | `4096` (256–128.000)                       |
+   | Polje               | Pomen                                                                            | Privzeto / omejitve                        |
+   | ------------------- | -------------------------------------------------------------------------------- | ------------------------------------------ |
+   | `enabled`           | Glavno stikalo                                                                   | `false`                                    |
+   | `defaultMode`       | `parallel` ali `collaborative` (glejte spodaj)                                   | `parallel`                                 |
+   | `providerOverrides` | Sodelovanje posameznega ponudnika (`providerId`, neobvezno `modelId`, `enabled`) | prazen = vsak aktivni ponudnik, največ 200 |
+   | `systemPrompt`      | Preglasitev za vgrajen poziv sistema Chaos                                       | neobvezno, največ 10 000 znakov            |
+   | `timeoutMs`         | Največji čas na klic modela                                                      | `120000` (5 000–600 000)                   |
+   | `maxTokens`         | `max_tokens` na klic modela                                                      | `4096` (256–128 000)                       |
 
-4. Zaženite **preskus neposredno na strani** — podokno z rezultati prikaže odgovor,
-   stanje in trajanje za vsakega ponudnika.
+4. Vsakemu sodelujočemu ponudniku dajte a** model** . Ponudnikov model je `modelId` njegove omogočene preglasitve na strani Chaos Mode (zmaga), sicer** privzeti model** njegove povezave. ID ponudnika se nikoli ne uporablja kot ime modela. Ponudnik z nobenim ni** ni poklican** : v rezultatih se prikaže kot `status: "error"` s sporočilom _"Model ni nastavljen za tega ponudnika. Nastavite model zanj na strani Chaos Mode ali privzeti model na povezavi."_ in praznim `modelId`, medtem ko drugi ponudniki delujejo normalno. Če noben izbrani ponudnik nima modela, zagon ne uspe pred kakršno koli zahtevo navzgor z _"Noben ponudnik nima nastavljenega modela. …"_ (HTTP 500 na obeh končnih točkah).
+5. Zaženi a** test na sami strani** — plošča z rezultati prikazuje odgovor, status in trajanje vsakega ponudnika.
 
 ## Načini izvajanja
 
@@ -51,27 +72,24 @@ vmesnik za izvajanje z več modeli in ne strategija usmerjanja: na vaš običajn
 
 ## API
 
-### `POST /api/chaos/run` — seja nadzorne plošče
+### seja nadzorne plošče `POST /api/chaos/run` —
 
-Preverjanje pristnosti s piškotkom (upravljavska seja — glejte
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); uporablja ga stran nadzorne plošče.
+Preverjeno s piškotki (seja upravljanja — glej [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); uporablja stran nadzorne plošče.
 
 ```jsonc
-// telo
+// body
 {
-  "task": "Compare approaches to X", // obvezno
-  "providers": ["glm", "kimi"], // izbirni filter
-  "mode": "parallel", // izbirno — preglasi defaultMode
-  "systemPrompt": "…", // izbirna nadomestitev
-  "maxTokens": 4096, // izbirna nadomestitev
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — ključ API
+### `POST /api/skills/collect/chaos` — API ključ
 
-Različica z žetonom Bearer za zunanje klicatelje. Ključ mora imeti **dovoljenje za Chaos Mode**
-(`chaosModeEnabled`), ki je **privzeto izklopljeno** — omogočite ga za posamezen ključ v
-**Nadzorna plošča → Upravitelj API-jev → urejanje ključa → dovoljenja → Chaos Mode**. Telo je enako kot zgoraj.
+Različica žetona nosilca za zunanje klicatelje. Ključ mora nositi** Dovoljenje za način kaosa** (`chaosModeEnabled`), kar je** privzeto izklopljeno** — ga omogočite na ključ** Dashboard → API Manager → edit key → permissions → Chaos Mode** . Enako telo kot zgoraj.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -80,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Obe končni točki vrneta enako strukturo:
+Obe končni točki vrneta enako obliko:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Obe končni točki vrneta enako strukturo:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // samo v sodelovalnem načinu
+  "summary": "…", // collaborative mode only
 }
 ```
 
 ## Odpravljanje težav
 
-- **`400 Chaos Mode is not enabled`** — glejte 2. korak zgoraj: globalno stikalo je izklopljeno.
-- **Ključ API je zavrnjen pri `/api/skills/collect/chaos`** — ključ nima dovoljenja
-  `chaosModeEnabled` za posamezni ključ (privzeto je izklopljeno; to je nastavitev in ne napaka).
-- **Pričakovani ponudnik manjka v rezultatih** — preverite `providerOverrides` na strani
-  Chaos Mode (onemogočena preglasitev ga izključi) in ali je povezava s ponudnikom
-  aktivna.
+- **`400 Chaos Mode is not enabled`** — 2. korak zgoraj: globalno stikalo je izklopljeno.
+- **ključ API je zavrnjen na `/api/skills/collect/chaos`** — ključ nima dovoljenja `chaosModeEnabled` za posamezen ključ (privzeto izklopljeno; to je nastavitev, ne napaka).
+- **Ponudnik prikaže `No model set for this provider`** — nastavi svoj model na strani Chaos Mode ali privzeti model na svoji povezavi (glejte Nastavitev, 4. korak).
+- **Med rezultati manjka ponudnik, ki ste ga pričakovali** — preverite `providerOverrides` na strani Chaos Mode (onemogočena preglasitev ga izključuje) in ali je povezava ponudnika aktivna.

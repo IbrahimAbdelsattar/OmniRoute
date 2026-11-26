@@ -5,41 +5,62 @@
 ---
 
 > **Hallintapaneeli:** **Chaos Mode** (sivupalkki) → `/dashboard/chaos`  
-> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (hallintapaneelin istunto) · `POST /api/skills/collect/chaos` (API-avain)  
+> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (hallintapaneeli-istunto) · `POST /api/skills/collect/chaos` (API-avain)  
 > **Lähdekoodi:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
 Chaos Mode lähettää **yhden tehtävän useille palveluntarjoajille samanaikaisesti** — jokainen osallistuva palveluntarjoaja
-tarjoaa yhden malli-instanssin, ja saat kaikki vastaukset rinnakkain (tai ketjutettuina). Se on
+tarjoaa yhden malliesiintymän, ja saat kaikki vastaukset rinnakkain (tai ketjutettuina). Se on
 usean mallin suoritusympäristö, ei reititysstrategia: se ei koskaan vaikuta tavalliseen
 `/v1/chat/completions`-liikenteeseesi.
 
 **Selvennys — kolme eri asiaa toimitetaan nimellä "chaos":**
 
-| Asia                       | Mikä se on                                                                                                                                      | Dokumentaation sijainti                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**             | Tässä kuvattu hallintapaneelin sivu ja API: yhden tehtävän jakaminen useille palveluntarjoajille (rinnakkain tai yhteistyössä).                 | Tämä opas                                    |
-| `auto/chaos`               | Vikasietoisuuden testaamiseen tarkoitettu Auto-Combo-mallitunnus, jossa on vikojen injektointiin perustuvat pisteytyspainot. Ei määritettävää.  | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos-yhdistelmän määritys | Pysyvästi tallennettu yhdistelmä, jossa `config.chaos.enabled` jakaa tehtävän paneelille, jolla voi olla valinnainen arviointimalli (vain API). | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Asia                       | Mikä se on                                                                                                                                                                                      | Dokumentaation sijainti                      |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**             | Tässä kuvattu hallintapaneelin sivu ja API: yhden tehtävän hajautus useille palveluntarjoajille (rinnakkain tai yhteistyössä).                                                                  | Tämä opas                                    |
+| `auto/chaos`               | Auto-Combo-mallitunnus: rinnakkainen hajautus, yksi malli palveluntarjoajaa kohti ja yksi kutsu kuhunkin taustapalveluun. Ei vikojen injektointia ([lisätietoja](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Chaos-yhdistelmän määritys | Tallennettu yhdistelmä, jossa `config.chaos.enabled` hajauttaa pyynnön samalla tavalla (vain API); `judgeModel` valitsee vain lopullisen vastauksen, eikä synteesikutsua tehdä.                 | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Määritys
+### `auto/chaos`: rinnakkainen hajautus
 
-1. Avaa **Hallintapaneeli → Chaos Mode** (`/dashboard/chaos`).
-2. Kytke se **päälle** — Chaos Mode toimitetaan **oletusarvoisesti poistettuna käytöstä** (`enabled: false` tiedostossa
-   `src/lib/chaos/chaosConfig.ts`). Kun se on poistettu käytöstä, `POST /api/chaos/run` vastaa
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Valitse osallistujat ja oletusasetukset (tallennetaan instanssikohtaisesti asetustietovarastoon):
+`auto/chaos` **ei ole** vikojen injektointiin tai vikasietoisuuden testaamiseen tarkoitettu asetus. Kun
+`model: "auto/chaos"` pyydetään `/v1/chat/completions`-rajapinnassa:
 
-   | Kenttä              | Merkitys                                                                                  | Oletusarvo / rajat                                         |
-   | ------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-   | `enabled`           | Pääkytkin                                                                                 | `false`                                                    |
-   | `defaultMode`       | `parallel` tai `collaborative` (katso alta)                                               | `parallel`                                                 |
-   | `providerOverrides` | Palveluntarjoajakohtainen osallistuminen (`providerId`, valinnainen `modelId`, `enabled`) | tyhjä = jokainen aktiivinen palveluntarjoaja, enintään 200 |
-   | `systemPrompt`      | Sisäänrakennetun Chaos-järjestelmäkehotteen korvaava kehote                               | valinnainen, enintään 10 000 merkkiä                       |
-   | `timeoutMs`         | Mallikutsun enimmäiskesto                                                                 | `120000` (5 000–600 000)                                   |
-   | `maxTokens`         | `max_tokens` mallikutsua kohden                                                           | `4096` (256–128 000)                                       |
+1. Muodostetaan paneeli, jossa on **yksi malli palveluntarjoajaa kohti**: kunkin
+   yhdistetyn palveluntarjoajan ensimmäinen ehdokas ehdokasjoukon järjestyksessä, enintään 5 jäsentä
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, yläraja 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). `chaos-mode`-painopaketti
+   asettaa vain kunkin jäsenen `weight`-arvon; hajautus ei lue sitä.
+2. Sama pyyntö lähetetään jokaiselle paneelin jäsenelle **rinnakkain**, joten yksi pyyntö
+   maksaa yhden taustapalvelukutsun kutakin paneelin jäsentä kohti
+   (`open-sse/services/autoCombo/chaosEngine.ts`, lähetys tiedostosta
+   `open-sse/services/combo.ts`).
+3. Kustakin paneelin jäsenestä suoratoistetaan yksi tilarivi sen valmistuessa: oletuksena
+   SSE-kommentti (`: chaos <index> ok|fail <model>`) sekä `omni-chaos-part`-tapahtuma
+   (`model`, `index`, `ok`, `error`), kun pyynnössä on asetettu
+   `stream_options.include_chaos_parts: true`. Nämä eivät sisällä vastaustekstiä.
+4. **Yksi** paneelin vastaus lähetetään lopullisena OpenAI-tyylisenä osana: ensimmäisen paneelin
+   jäsenen vastaus (`auto/chaos` asettaa sen `judgeModel`-arvoksi), jos kutsu onnistuu, muussa tapauksessa
+   viimeisen onnistuneen jäsenen vastaus. Muiden paneelin jäsenten vastauksia ei palauteta, joten
+   maksat N kutsusta ja saat yhden vastauksen.
 
-4. Suorita **testi suoraan sivulta** — tulospaneeli näyttää kunkin palveluntarjoajan vastauksen,
-   tilan ja keston.
+## Asennus
+
+1. Avata** Kojelauta → Chaos Mode** (`/dashboard/chaos`).
+2. Käännä se** päällä** — Chaos Mode toimitetaan** oletuksena pois käytöstä** (`enabled: false` in `src/lib/chaos/chaosConfig.ts`). Kun `POST /api/chaos/run` on poistettu käytöstä, se vastaa `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Valitse osallistujat ja oletusasetukset (säilyy tapauskohtaisesti asetuskaupan kautta):
+
+   | Ala                 | Merkitys                                                                                  | Oletus/rajat                                  |
+   | ------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------- |
+   | `enabled`           | Pääkytkin                                                                                 | `false`                                       |
+   | `defaultMode`       | `parallel` tai `collaborative` (katso alla)                                               | `parallel`                                    |
+   | `providerOverrides` | Palveluntarjoajakohtainen osallistuminen (`providerId`, valinnainen `modelId`, `enabled`) | tyhjä = jokainen aktiivinen tarjoaja, max 200 |
+   | `systemPrompt`      | Ohita sisäänrakennettu Chaos-järjestelmäkehote                                            | valinnainen, enintään 10 000 merkkiä          |
+   | `timeoutMs`         | Max aika mallipuhelua kohden                                                              | `120000` (5 000–600 000)                      |
+   | `maxTokens`         | `max_tokens` mallin mukaan                                                                | `4096` (256–128 000)                          |
+
+4. Anna jokaiselle osallistuvalle palveluntarjoajalle a** malli** . Palveluntarjoajan malli on sen sallitun ohituksen `modelId` Chaos Mode -sivulla (se voittaa), muuten** oletusmalli** sen yhteydestä. Palveluntarjoajan tunnusta ei koskaan käytetä mallin nimenä. Palveluntarjoaja, jolla ei ole kumpaakaan** ei kutsuttu** : se näkyy tuloksissa muodossa `status: "error"` ja viesti _"Tälle palveluntarjoajalle ei ole asetettu mallia. Aseta sille malli Chaos Mode -sivulla tai oletusmalli yhteydelle."_ ja tyhjä `modelId`, kun muut palveluntarjoajat toimivat normaalisti. Jos millään valitulla toimittajalla ei ole mallia, ajo epäonnistuu ennen mitään ylävirran pyyntöä _"Ei toimittajalla ole mallia asetettu. …"_ (HTTP 500 molemmissa päätepisteissä).
+5. Juokse a** testi itse sivulta** — tulospaneeli näyttää kunkin palveluntarjoajan vastauksen, tilan ja keston.
 
 ## Suoritustilat
 
@@ -51,27 +72,24 @@ usean mallin suoritusympäristö, ei reititysstrategia: se ei koskaan vaikuta ta
 
 ## API
 
-### `POST /api/chaos/run` — hallintapaneelin istunto
+### `POST /api/chaos/run` — kojelautaistunto
 
-Evästeellä todennettu (hallintaistunto — katso
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); hallintapaneelin sivu käyttää tätä.
+Evästetodennettu (hallintaistunto — katso [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); kojelautasivun käyttämä.
 
 ```jsonc
-// pyyntörunko
+// body
 {
-  "task": "Compare approaches to X", // pakollinen
-  "providers": ["glm", "kimi"], // valinnainen suodatin
-  "mode": "parallel", // valinnainen — ohittaa defaultMode-asetuksen
-  "systemPrompt": "…", // valinnainen ohitus
-  "maxTokens": 4096, // valinnainen ohitus
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — API-avain
+### `POST /api/skills/collect/chaos` — API avain
 
-Bearer-tunnisteversio ulkoisille kutsujille. Avaimella on oltava **Chaos Mode -oikeus**
-(`chaosModeEnabled`), joka on **oletusarvoisesti pois käytöstä** — ota se käyttöön avainkohtaisesti kohdassa
-**Hallintapaneeli → API-hallinta → muokkaa avainta → oikeudet → Chaos Mode**. Pyyntörunko on sama kuin yllä.
+Siirtotoken-versio ulkoisille soittajille. Avaimessa on oltava** Chaos Moden lupa** (`chaosModeEnabled`), mikä on** oletuksena pois päältä** — ota se käyttöön näppäintä kohti** Kojelauta → API Manager → muokkausnäppäin → käyttöoikeudet → kaaostila** . Sama runko kuin yllä.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -80,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Molemmat päätepisteet palauttavat saman rakenteen:
+Molemmat päätepisteet palauttavat saman muodon:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Molemmat päätepisteet palauttavat saman rakenteen:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // vain collaborative-tilassa
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## Vianmääritys
+## Vianetsintä
 
-- **`400 Chaos Mode is not enabled`** — katso vaihe 2 yllä: yleinen kytkin on pois päältä.
-- **API-avain hylätään päätepisteessä `/api/skills/collect/chaos`** — avaimelta puuttuu avainkohtainen
-  `chaosModeEnabled`-oikeus (oletusarvoisesti pois käytöstä; tämä on asetus, ei virhe).
-- **Odottamasi palveluntarjoaja puuttuu tuloksista** — tarkista Chaos Mode -sivun `providerOverrides`-asetukset
-  (käytöstä poistettu ohitus sulkee palveluntarjoajan pois) sekä se, onko palveluntarjoajan yhteys
-  aktiivinen.
+- **`400 Chaos Mode is not enabled`** — vaihe 2 yllä: yleinen kytkin on pois päältä.
+- **API -avain hylätään `/api/skills/collect/chaos` ssä** — avaimelta puuttuu näppäinkohtainen `chaosModeEnabled` -oikeus (oletusarvoisesti pois päältä; tämä on asetus, ei virhe).
+- **Palveluntarjoaja näyttää `No model set for this provider`** — asetti mallinsa Chaos Mode -sivulle tai oletusmallin yhteydelleen (katso Asetukset, vaihe 4).
+- **Odottamasi palveluntarjoaja puuttuu tuloksista** — tarkista `providerOverrides` Chaos Mode -sivulta (poistettu ohitus sulkee sen pois) ja onko palveluntarjoajan yhteys aktiivinen.

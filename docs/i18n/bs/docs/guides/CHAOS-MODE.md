@@ -4,38 +4,63 @@
 
 ---
 
-# Chaos Mode
-
-> **Kontrolna tabla:** **Chaos Mode** (bočna traka) → `/dashboard/chaos`  
-> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (sesija kontrolne table) · `POST /api/skills/collect/chaos` (API ključ)  
+> **Kontrolna ploča:** **Chaos Mode** (bočna traka) → `/dashboard/chaos`  
+> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (sesija kontrolne ploče) · `POST /api/skills/collect/chaos` (API ključ)  
 > **Izvor:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Chaos Mode šalje **jedan zadatak na nekoliko provajdera odjednom** — svaki provajder koji učestvuje doprinosi jednom instancom modela, a vi dobijate sve odgovore jedan pored drugog (ili u lancu). To je površina za izvršavanje više modela, a ne strategija rutiranja: vaš normalni `/v1/chat/completions` saobraćaj nikada nije pogođen ovim.
+Chaos Mode šalje **jedan zadatak većem broju pružalaca usluga odjednom** — svaki pružalac usluga koji učestvuje
+doprinosi jednom instancom modela, a vi dobijate sve odgovore jedan pored drugog (ili ulančane). To je
+površina za izvršavanje s više modela, a ne strategija usmjeravanja: ona nikada ne utiče na vaš uobičajeni
+saobraćaj prema `/v1/chat/completions`.
 
-**Razjašnjenje — tri različite stvari dolaze sa "chaos" u nazivu:**
+**Pojašnjenje — isporučuju se tri različite stvari koje u nazivu sadrže "chaos":**
 
-| Stavka             | Šta je to                                                                                                                    | Gdje je dokumentovano                        |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**     | Stranica kontrolne table + API opisan ovdje: distribucija jednog zadatka na mnogo provajdera (paralelno ili kolaborativno).  | Ovaj vodič                                   |
-| `auto/chaos`       | ID Auto-Combo modela sa težinama bodovanja za ubrizgavanje grešaka, za testiranje otpornosti. Nema ničega za konfigurisanje. | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos combo config | Trajna kombinacija sa `config.chaos.enabled` koja se distribuira na panel sa opcionim modelom sudijom (samo API).            | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Stvar                           | Šta predstavlja                                                                                                                                                             | Gdje je dokumentovano                        |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**                  | Ovdje opisana stranica kontrolne ploče + API: prosljeđuje jedan zadatak većem broju pružalaca usluga (paralelno ili saradnički).                                            | Ovaj vodič                                   |
+| `auto/chaos`                    | ID Auto-Combo modela: paralelno prosljeđivanje, jedan model po pružaocu usluga, po jedan uzvodni poziv. Nije ubrizgavanje grešaka ([detalji](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Konfiguracija Chaos kombinacije | Trajna kombinacija s `config.chaos.enabled` prosljeđuje zahtjev na isti način (samo putem API-ja); `judgeModel` samo bira konačni odgovor, bez poziva za sintezu.           | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Podešavanje
+### `auto/chaos`: paralelno prosljeđivanje
 
-1. Otvorite **Kontrolna tabla → Chaos Mode** (`/dashboard/chaos`).
-2. Uključite ga (**on**) — Chaos Mode dolazi **onemogućen po podrazumijevanoj vrijednosti** (`enabled: false` u `src/lib/chaos/chaosConfig.ts`). Dok je onemogućen, `POST /api/chaos/run` odgovara sa `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Odaberite učesnike i podrazumijevane vrijednosti (trajno sačuvano po instanci putem skladišta postavki):
+`auto/chaos` **nije** postavka za ubrizgavanje grešaka ili testiranje otpornosti. Zahtjev za
+`model: "auto/chaos"` na `/v1/chat/completions`:
 
-   | Polje               | Značenje                                                          | Podrazumijevano / ograničenja              |
-   | ------------------- | ----------------------------------------------------------------- | ------------------------------------------ |
-   | `enabled`           | Glavni prekidač                                                   | `false`                                    |
-   | `defaultMode`       | `parallel` ili `collaborative` (pogledajte ispod)                 | `parallel`                                 |
-   | `providerOverrides` | Učešće po provajderu (`providerId`, opcioni `modelId`, `enabled`) | prazno = svaki aktivni provajder, maks 200 |
-   | `systemPrompt`      | Zamjena za ugrađeni Chaos sistemski prompt                        | opciono, maks 10 000 znakova               |
-   | `timeoutMs`         | Maksimalno vrijeme po pozivu modela                               | `120000` (5 000–600 000)                   |
-   | `maxTokens`         | `max_tokens` po pozivu modela                                     | `4096` (256–128 000)                       |
+1. Formira panel od **jednog modela po pružaocu usluga**: prvi kandidat svakog
+   povezanog pružaoca usluga, prema redoslijedu u skupu kandidata, do najviše 5 članova
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, ograničeno na 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Paket težina `chaos-mode`
+   samo postavlja `weight` svakog člana; prosljeđivanje je ne čita.
+2. Šalje isti zahtjev svakom članu panela **paralelno**, tako da jedan zahtjev
+   košta jedan uzvodni poziv po članu panela
+   (`open-sse/services/autoCombo/chaosEngine.ts`, otpremljeno iz
+   `open-sse/services/combo.ts`).
+3. Emotuje po jednu statusnu liniju za svakog člana panela kako rezultat stiže: SSE komentar
+   (`: chaos <index> ok|fail <model>`) prema zadanim postavkama, uz događaj `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) kada zahtjev postavi
+   `stream_options.include_chaos_parts: true`. Oni ne sadrže tekst odgovora.
+4. Šalje **jedan** odgovor panela kao konačni isječak u OpenAI stilu: odgovor prvog člana
+   panela (`auto/chaos` ga postavlja kao `judgeModel`) kada je uspješan, a u suprotnom
+   odgovor posljednjeg uspješnog člana. Ostali odgovori panela se ne vraćaju, tako da
+   plaćate N poziva, a dobijate jedan završeni odgovor.
 
-4. Pokrenite **test sa same stranice** — panel sa rezultatima prikazuje odgovor, status i trajanje svakog provajdera.
+## Setup
+
+1. Otvori** Kontrolna tabla → Chaos Mode** (`/dashboard/chaos`).
+2. Okreni ga** on** — Chaos Mode brodovi** onemogućeno po defaultu** (`enabled: false` u `src/lib/chaos/chaosConfig.ts`). Dok je onemogućen, `POST /api/chaos/run` odgovara `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Odaberite učesnike i zadane postavke (zadržane po instanci putem trgovine postavki):
+
+   | Polje               | Značenje                                                          | Zadano / ograničenja                      |
+   | ------------------- | ----------------------------------------------------------------- | ----------------------------------------- |
+   | `enabled`           | Glavni prekidač                                                   | `false`                                   |
+   | `defaultMode`       | `parallel` ili `collaborative` (vidi dolje)                       | `parallel`                                |
+   | `providerOverrides` | Učešće po provajderu (`providerId`, opciono `modelId`, `enabled`) | prazan = svaki aktivni provajder, max 200 |
+   | `systemPrompt`      | Poništi za ugrađeni Chaos sistemski prompt                        | opciono, maksimalno 10 000 znakova        |
+   | `timeoutMs`         | Maksimalno vrijeme po pozivu modela                               | `120000` (5 000–600 000)                  |
+   | `maxTokens`         | `max_tokens` po pozivu modela                                     | `4096` (256–128 000)                      |
+
+4. Dajte svakom provajderu koji učestvuje a** model** . Model provajdera je `modelId` njegovog omogućenog nadjačavanja na stranici Chaos Mode (pobjeđuje), inače** podrazumevani model** njegove povezanosti. Id dobavljača se nikada ne koristi kao naziv modela. Provajder koji nema ni jedno ni drugo** nije pozvan** : pojavljuje se u rezultatima kao `status: "error"` sa porukom _"Nije postavljen model za ovog provajdera. Postavite model za njega na stranici Chaos Mode ili podrazumevani model na vezi."_ i prazan `modelId`, dok ostali provajderi rade normalno. Ako nijedan odabrani dobavljač nema model, izvođenje ne uspijeva prije bilo kojeg upstream zahtjeva sa _"Nijedan dobavljač nema postavljen model. ..."_ (HTTP 500 na obje krajnje točke).
+5. Pokreni a** test sa same stranice** — panel rezultata prikazuje odgovor svakog provajdera, status i trajanje.
 
 ## Načini izvršavanja
 
@@ -44,24 +69,24 @@ Chaos Mode šalje **jedan zadatak na nekoliko provajdera odjednom** — svaki pr
 
 ## API
 
-### `POST /api/chaos/run` — sesija kontrolne table
+### `POST /api/chaos/run` — sesija nadzorne ploče
 
-Autentifikovano putem kolačića (sesija upravljanja — pogledajte [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); koristi se na stranici kontrolne table.
+Cookie-authenticated (sesija upravljanja — vidi [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); koristi stranica kontrolne table.
 
 ```jsonc
-// tijelo
+// body
 {
-  "task": "Compare approaches to X", // obavezno
-  "providers": ["glm", "kimi"], // opcioni filter
-  "mode": "parallel", // opciono — zamjenjuje defaultMode
-  "systemPrompt": "…", // opciona zamjena
-  "maxTokens": 4096, // opciona zamjena
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
 ### `POST /api/skills/collect/chaos` — API ključ
 
-Varijanta sa Bearer tokenom za eksterne pozivaoce. Ključ mora imati **Chaos Mode dozvolu** (`chaosModeEnabled`), koja je **isključena po podrazumijevanoj vrijednosti** — omogućite je po ključu u **Kontrolna tabla → API Manager → uredi ključ → dozvole → Chaos Mode**. Isto tijelo kao iznad.
+Varijanta nosioca tokena za eksterne pozivaoce. Ključ mora nositi** Dozvola za način rada Haosa** (`chaosModeEnabled`), što je** isključeno prema zadanim postavkama** — ga omogući po ključu** Nadzorna ploča → API Manager → ključ za uređivanje → dozvole → Način rada kaos** . Isto tijelo kao gore.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -70,7 +95,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Oba endpointa vraćaju isti oblik:
+Obje krajnje tačke vraćaju isti oblik:
 
 ```jsonc
 {
@@ -89,12 +114,13 @@ Oba endpointa vraćaju isti oblik:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // samo za kolaborativni način rada
+  "summary": "…", // collaborative mode only
 }
 ```
 
 ## Rješavanje problema
 
 - **`400 Chaos Mode is not enabled`** — korak 2 iznad: globalni prekidač je isključen.
-- **API ključ biva odbijen na `/api/skills/collect/chaos`** — ključu nedostaje `chaosModeEnabled` dozvola po ključu (isključena po podrazumijevanoj vrijednosti; ovo je postavka, a ne greška).
-- **Provajder kojeg ste očekivali nedostaje u rezultatima** — provjerite `providerOverrides` na stranici Chaos Mode (onemogućena zamjena ga isključuje) i da li je veza sa provajderom aktivna.
+- **API ključ biva odbijen na `/api/skills/collect/chaos`** — ključu nedostaje dozvola `chaosModeEnabled` po ključu (podrazumevano isključeno; ovo je postavka, a ne greška).
+- **Provajder pokazuje `No model set for this provider`** — postavlja svoj model na stranici Chaos Mode ili podrazumevani model na svojoj vezi (pogledajte Podešavanje, korak 4).
+- **Provajder kojeg ste očekivali nedostaje u rezultatima** — provjerite `providerOverrides` na stranici Chaos Mode (onemogućeno nadjačavanje to isključuje) i da li je veza provajdera aktivna.
