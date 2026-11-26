@@ -57,11 +57,11 @@ dahil sa isang kongkretong katotohanan ng implementasyon:
 
 Narito ang kahulugan nito sa bawat surface, kahit may `CORS_ALLOW_ALL=true`:
 
-| Surface                             | Mekanismo ng auth           | Epekto ng wildcard CORS                                                                                                                                                                                                                                               |
-| ----------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dashboard / MANAGEMENT `/api/*`     | Cookie session              | Ini-echo ang origin, ngunit **kung walang `Allow-Credentials`**, **bina-block** ng browser ang credentialed na pagbasa. **Hindi mababasa** ng mapaminsalang cross-origin site ang iyong mga authenticated dashboard response, at hindi nalalantad ang session cookie. |
-| Client API `/v1/*`, `/v1beta/*`     | Bearer / `x-api-key` header | Permissive na ito **ayon sa disenyo** (`relaxForTokenAuth`): hindi awtomatikong inilalakip ng mga browser ang `Authorization`/`x-api-key`, kaya hindi maibibigay ng page ng attacker ang iyong key. Hindi ito pinalalawak ng `CORS_ALLOW_ALL`.                        |
-| Public read-only (`/api/health`, …) | Wala                        | Hindi sensitibo; hindi nakapipinsala ang wildcard.                                                                                                                                                                                                                    |
+| Surface                             | Mekanismo ng auth           | Epekto ng wildcard CORS                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard / MANAGEMENT `/api/*`     | Cookie session              | Ini-echo ang origin, ngunit **kung walang `Allow-Credentials`**, **bina-block** ng browser ang credentialed na pagbasa. **Hindi mababasa** ng mapaminsalang cross-origin site ang iyong mga authenticated dashboard response, at hindi nalalantad ang session cookie.                                                                                                                         |
+| Client API `/v1/*`, `/v1beta/*`     | Bearer / `x-api-key` header | Permissive na ito **ayon sa disenyo** (`relaxForTokenAuth`): hindi awtomatikong inilalakip ng mga browser ang `Authorization`/`x-api-key`, kaya hindi maibibigay ng page ng attacker ang iyong key. Nalalapat lang ang echo kapag na-validate ang ipinakitang key; pinananatili ng mga anonymous na tugon (`REQUIRE_API_KEY=false`) ang allowlist. Hindi ito pinalalawak ng `CORS_ALLOW_ALL`. |
+| Public read-only (`/api/health`, …) | Wala                        | Hindi sensitibo; hindi nakapipinsala ang wildcard.                                                                                                                                                                                                                                                                                                                                            |
 
 Kaya ang **natitirang** exposure ng `CORS_ALLOW_ALL=true` ay limitado sa: (a)
 mga non-credentialed na cross-origin na **pagbasa** ng data na una pa lang ay unauthenticated na, at (b)
@@ -117,35 +117,58 @@ ang trailing slash, kaya magkatumbas ang `http://localhost:3000` at
 `http://localhost:3000/`. Maaari ring itakda ang parehong CSV sa runtime sa
 **Dashboard → Security → CORS Allowed Origins** nang hindi nagre-restart.
 
-## Mga API key kumpara sa mga cookie session
+## API keys vs cookie session
 
-- **Bearer / `x-api-key` (ang `/v1/*` inference surface):** hindi kailanman awtomatikong
-  inilalakip ng mga browser ang mga ito. Hindi makabuluhang hadlang ang CORS dito — ang API key
-  ang hadlang — kaya sadyang permissive ang surface na iyon upang mabasa ng mga browser at
-  Electron client ang mga tugon na mayroon na silang karapatang ma-access.
-- **Cookie session (ang dashboard):** pinoprotektahan ng fail-closed na default **at**
-  ng kawalan ng `Access-Control-Allow-Credentials` sa shared path. Huwag isama ang mga
-  origin ng management/dashboard sa anumang permissive na config; dapat manatiling ganap na
-  fail-closed ang mga ito.
+- **Tagadala / `x-api-key` (ang ibabaw ng hinuha `/v1/*` ):** hindi kailanman awtomatikong ikinakabit ng mga browser ang mga ito. CORS ay hindi isang makabuluhang hadlang dito — ang API key ay ang hadlang — kung kaya't ang ibabaw na iyon ay sadyang pinahintulutan upang ang mga kliyente ng browser at Electron ay makakabasa ng mga tugon na mayroon na silang karapatan. Ang nakakarelaks na echo ay sumusunod sa na-validate na key, hindi ang presensya lamang ng header: kapag `REQUIRE_API_KEY=false` ay naghahatid ng isang kahilingan nang hindi nagpapakilala, ang matagumpay na tugon nito ay nagpapanatili sa fail-closed allowlist. Ang mga pagtanggi sa auth (401) ay mananatiling nababasa upang maipakita ng mga kliyente ang isang binawi o na-mistype na key (#5242): ang sariling pipeline na 401 ay nagpapanatili ng echo, at isang ruta na tumatanggi sa mismong susi pagkatapos itong ihatid ng pipeline bilang anonymous (`/v1/models` at `/v1beta/models` na may management auth na na-configure, ang nasasakupan ng may-ari `/v1/files`, `/v1/media`-com) na mga ruta, `/v1/batches`, `/v1/session-leases`, ang mga ruta ng may-ari. echo sa 401 na iyon sa pamamagitan ng `credentialRejectionHeaders()`. Ang echo ay naka-key sa kahilingan na nagdadala ng isang kredensyal na header (`Authorization`, `x-api-key`, `x-goog-api-key` o ang `auth_token` cookie), hindi sa kung alin sa kanila ang ruta na nasuri, at hindi kailanman ipinares sa `Access-Control-Allow-Credentials`; ang katawan ay isang nakapirming sobre ng error. Ang mga ruta ng pamamahala sa ilalim ng `/api/v1/` na binabantayan ng `requireManagementAuth()` (`/api/v1/management/*`, `/api/v1/registered-keys`, `/api/v1/providers/[provider]/limits`, `/api/v1/accounts/[id]/limits`, `/api/v1/issues/report`) ay huwag magdagdag ng echo: sa `REQUIRE_API_KEY=false` ang kanilang 401/403 ay hindi nababasa na cross-origin.
+- **Cookie session (ang dashboard):** protektado ng default na fail-closed** at** sa pamamagitan ng kawalan ng `Access-Control-Allow-Credentials` sa ibinahaging landas. Panatilihin ang management/dashboard na pinagmulan sa anumang permissive na config; dapat silang manatiling eksaktong nabigo-sarado.
+
+## Mga WebSocket handshake (`/v1/responses`, `/v1/ws`)
+
+Hindi inilalapat ng mga browser ang CORS sa WebSocket, kaya ang mga WebSocket transport
+na nagbabalik ng inference output ang mismong sumusuri sa `Origin` ng handshake
+(`src/server/origin/wsOrigin.ts`): ang Responses WebSocket (`/v1/responses`) at, kapag
+pinapatakbo ang OmniRoute sa pamamagitan ng `npm start` / `npm run dev`, ang bridge na
+`/v1/ws` at `/api/v1/ws`, na nag-i-stream ng `/v1/chat/completions`, `/v1/messages` at
+`/v1/responses` bilang mga frame. Humihingi ang bridge ng hatol sa
+`/api/v1/ws?handshake=1` at tumatangging mag-upgrade maliban kung pinatakbo ng rutang
+iyon ang pagsusuri. Tinatanggap ang isang handshake kapag:
+
+- wala itong `Origin` header (Codex CLI, mga SDK at iba pang client na hindi browser);
+- pinapayagan ng allowlist sa itaas ang `Origin` (`CORS_ALLOWED_ORIGINS`, ang setting
+  na `corsOrigins`, `CORS_ORIGIN`, `CORS_ALLOW_ALL`);
+- ang `Origin` ay isa sa mga sariling pampublikong origin ng OmniRoute (ang naka-configure
+  na pampublikong base URL, ang ipinasang origin ng isang pinagkakatiwalaang proxy, o isang
+  direktang loopback/LAN host na ibinigay bilang IP literal o `localhost` — ang parehong
+  mga kandidatong ginagamit ng mutation check ng dashboard); o
+- may dala itong valid na API key, gaya sa HTTP surface na `/v1/*`.
+
+Anumang iba pa ay makakatanggap ng `403 ws_origin_forbidden`. Hindi nalilibre ng session
+cookie ng dashboard ang isang banyagang `Origin`, dahil ikinakabit ito ng browser sa
+socket ng anumang page. Hindi itinuturing na parehong origin ang `localhost` sa ibang
+port; idagdag ang mga ganitong dev origin sa `CORS_ALLOWED_ORIGINS`.
 
 ## Halimbawa: reverse proxy sa harap ng OmniRoute
 
 Ang CORS ay ipinapatupad mismo ng OmniRoute, kaya karaniwang **hindi** dapat magdagdag o
-magsulat muli ang proxy ng mga `Access-Control-*` header (sinisira ng dobleng header ang mga
-browser). Tapusin ang TLS at i-forward — hayaang OmniRoute ang sumagot sa preflight:
+magsulat muli ang proxy ng mga header na `Access-Control-*` (sinisira ng dobleng mga header ang mga browser). I-terminate ang TLS
+at i-forward ang trapiko — hayaang OmniRoute ang tumugon sa preflight:
 
 ```nginx
-# nginx — i-forward sa OmniRoute; HUWAG mag-inject ng Access-Control-* dito
+# nginx — i-forward sa OmniRoute; HUWAG magpasok ng Access-Control-* dito
 location / {
     proxy_pass http://127.0.0.1:20128;
     proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    # HUWAG itakda ang X-Forwarded-For sa 127.0.0.1 — pinawawalang-saysay nito ang loopback route guard.
+    # Panatilihin ang mga forwarding header: ang proxy sa parehong host ay kumokonekta mula sa loopback, at ang mga ito
+    # ang nagsasabi sa OmniRoute na ang tumatawag ay hindi ang lokal na operator. Kapag walang idinagdag na ganitong header ang proxy,
+    # magmumukhang lokal ang bawat malayuang tumatawag. Huwag ding itakda kailanman ang X-Forwarded-For sa 127.0.0.1.
 }
 ```
 
-Itakda ang mga pinapayagang browser origin sa OmniRoute (`CORS_ALLOWED_ORIGINS` o ang
-tab na Security), hindi sa proxy.
+Itakda sa OmniRoute (`CORS_ALLOWED_ORIGINS` o ang tab na
+Security) ang mga pinapayagang origin ng browser, hindi sa proxy.
 
 ## Mga source file
 
@@ -158,6 +181,7 @@ tab na Security), hindi sa proxy.
 | Warning banner ng dashboard                       | `src/app/(dashboard)/dashboard/settings/components/AuthzSection.tsx` |
 | Field na CORS Allowed Origins                     | `src/app/(dashboard)/dashboard/settings/components/SecurityTab.tsx`  |
 | Per-route CORS ng Cloud-Agent (ang eksepsiyon)    | `src/lib/cloudAgent/api.ts`                                          |
+| Pagsusuri ng `Origin` sa WebSocket handshake      | `src/server/origin/wsOrigin.ts`                                      |
 
 ## Tingnan din
 

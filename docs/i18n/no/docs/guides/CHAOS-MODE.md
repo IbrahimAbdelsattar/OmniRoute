@@ -8,38 +8,59 @@
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (kontrollpaneløkt) · `POST /api/skills/collect/chaos` (API-nøkkel)  
 > **Kilde:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Chaos Mode sender **én oppgave til flere leverandører samtidig** — hver deltakende leverandør
-bidrar med én modellinstans, og du får alle svarene side om side (eller kjedet). Det er en
-utførelsesflate for flere modeller, ikke en rutingsstrategi: den vanlige trafikken din til `/v1/chat/completions`
-påvirkes aldri av den.
+Chaos Mode sender **én oppgave til flere leverandører samtidig** – hver deltakende leverandør
+bidrar med én modellinstans, og du får alle svarene side om side (eller kjedet sammen). Det er en
+utførelsesflate for flere modeller, ikke en rutingsstrategi: Den vanlige trafikken din til `/v1/chat/completions`
+påvirkes aldri av dette.
 
-**Presisering — tre forskjellige ting leveres med «chaos» i navnet:**
+**Presisering – tre forskjellige ting leveres med «chaos» i navnet:**
 
-| Ting                     | Hva det er                                                                                                              | Hvor det er dokumentert                      |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**           | Kontrollpanelsiden og API-et som beskrives her: send én oppgave til mange leverandører (parallelt eller samarbeidende). | Denne veiledningen                           |
-| `auto/chaos`             | En Auto-Combo-modell-ID med vekting for feilinjeksjon, beregnet på robusthetstesting. Ingenting å konfigurere.          | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos-kombokonfigurasjon | En lagret kombinasjon der `config.chaos.enabled` sender til et panel med en valgfri dommermodell (kun API).             | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Ting                            | Hva det er                                                                                                                                                        | Hvor det er dokumentert                      |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**                  | Kontrollpanelsiden og API-et som beskrives her: Spre én oppgave til mange leverandører (parallelt eller i samarbeid).                                             | Denne veiledningen                           |
+| `auto/chaos`                    | Auto-Combo-modell-ID: parallell spredning, én modell per leverandør, ett oppstrømskall hver. Ikke feilinjisering ([detaljer](#autochaos-parallel-fan-out)).       | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Chaos-kombinasjonskonfigurasjon | En lagret kombinasjon med `config.chaos.enabled` sprer forespørselen på samme måte (kun via API); `judgeModel` velger bare det endelige svaret, uten syntesekall. | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`: parallell spredning
+
+`auto/chaos` er **ikke** en innstilling for feilinjisering eller robusthetstesting. En forespørsel med
+`model: "auto/chaos"` til `/v1/chat/completions`:
+
+1. Bygger et panel med **én modell per leverandør**: den første kandidaten fra hver
+   tilkoblede leverandør, i kandidatpoolens rekkefølge, med opptil 5 medlemmer
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, begrenset til maksimalt 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Vektpakken `chaos-mode`
+   angir bare hvert medlems `weight`; spredningen leser den ikke.
+2. Sender den samme forespørselen til hvert panelmedlem **parallelt**, slik at én forespørsel
+   koster ett oppstrømskall per panelmedlem
+   (`open-sse/services/autoCombo/chaosEngine.ts`, distribuert fra
+   `open-sse/services/combo.ts`).
+3. Strømmer én statuslinje per panelmedlem etter hvert som den ankommer: en SSE-kommentar
+   (`: chaos <index> ok|fail <model>`) som standard, samt en `omni-chaos-part`-hendelse
+   (`model`, `index`, `ok`, `error`) når forespørselen angir
+   `stream_options.include_chaos_parts: true`. Disse inneholder ingen svartekst.
+4. Sender **ett** panelsvar som den endelige delen i OpenAI-format: svaret fra det første
+   panelmedlemmet (`auto/chaos` angir det som `judgeModel`) når det lykkes, ellers
+   svaret fra det siste medlemmet som lyktes. De andre panelsvarene returneres ikke, så
+   du betaler for N kall og mottar én fullføring.
 
 ## Oppsett
 
-1. Åpne **Kontrollpanel → Chaos Mode** (`/dashboard/chaos`).
-2. Slå den **på** — Chaos Mode leveres **deaktivert som standard** (`enabled: false` i
-   `src/lib/chaos/chaosConfig.ts`). Når den er deaktivert, svarer `POST /api/chaos/run` med
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Velg deltakere og standardinnstillinger (lagres per instans via innstillingslageret):
+1. Åpne** Dashboard → Chaos Mode** (`/dashboard/chaos`).
+2. Snu den** på** — Chaos Mode-skip** deaktivert som standard** (`enabled: false` i `src/lib/chaos/chaosConfig.ts`). Mens de er deaktivert, svarer `POST /api/chaos/run` `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Velg deltakerne og standardinnstillingene (vedvarende per forekomst via innstillingsbutikken):
 
-   | Felt                | Betydning                                                              | Standard / grenser                        |
-   | ------------------- | ---------------------------------------------------------------------- | ----------------------------------------- |
-   | `enabled`           | Hovedbryter                                                            | `false`                                   |
-   | `defaultMode`       | `parallel` eller `collaborative` (se nedenfor)                         | `parallel`                                |
-   | `providerOverrides` | Deltakelse per leverandør (`providerId`, valgfri `modelId`, `enabled`) | tom = alle aktive leverandører, maks. 200 |
-   | `systemPrompt`      | Overstyring av den innebygde Chaos-systeminstruksen                    | valgfri, maks. 10 000 tegn                |
-   | `timeoutMs`         | Maksimal tid per modellkall                                            | `120000` (5 000–600 000)                  |
-   | `maxTokens`         | `max_tokens` per modellkall                                            | `4096` (256–128 000)                      |
+   | Felt                | Betydning                                                              | Standard / grenser                     |
+   | ------------------- | ---------------------------------------------------------------------- | -------------------------------------- |
+   | `enabled`           | Hovedbryter                                                            | `false`                                |
+   | `defaultMode`       | `parallel` eller `collaborative` (se nedenfor)                         | `parallel`                             |
+   | `providerOverrides` | Deltakelse per leverandør (`providerId`, valgfri `modelId`, `enabled`) | tom = hver aktive leverandør, maks 200 |
+   | `systemPrompt`      | Overstyr for den innebygde Chaos-systemmeldingen                       | valgfritt, maks 10 000 tegn            |
+   | `timeoutMs`         | Maks tid per modellanrop                                               | `120000` (5 000–600 000)               |
+   | `maxTokens`         | `max_tokens` per modellanrop                                           | `4096` (256–128 000)                   |
 
-4. Kjør en **test fra selve siden** — resultatpanelet viser hver leverandørs svar,
-   status og varighet.
+4. Gi hver deltakende leverandør en** modell** . En leverandørs modell er `modelId` for dens aktiverte overstyring på Chaos Mode-siden (den vinner), ellers** standardmodell** av dens forbindelse. En leverandør-ID brukes aldri som modellnavn. En leverandør med ingen av dem** ikke ringt** : den vises i resultatene som `status: "error"` med meldingen _"Ingen modell satt for denne leverandøren. Sett en modell for den på Chaos Mode-siden eller en standardmodell på tilkoblingen."_ og en tom `modelId`, mens de andre leverandørene kjører normalt. Hvis ingen valgt leverandør har en modell, mislykkes kjøringen før en oppstrømsforespørsel med _"Ingen leverandør har et modellsett. …"_ (HTTP 500 på begge endepunkter).
+5. Kjør a** test fra selve siden** — resultatpanelet viser hver leverandørs svar, status og varighet.
 
 ## Utførelsesmoduser
 
@@ -51,27 +72,24 @@ påvirkes aldri av den.
 
 ## API
 
-### `POST /api/chaos/run` — kontrollpaneløkt
+### `POST /api/chaos/run` — dashbordøkt
 
-Autentisert med informasjonskapsel (administrasjonsøkten — se
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); brukes av kontrollpanelsiden.
+Cookie-autentisert (administrasjonsøkten — se [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); brukt av dashbordsiden.
 
 ```jsonc
-// forespørselskropp
+// body
 {
-  "task": "Compare approaches to X", // påkrevd
-  "providers": ["glm", "kimi"], // valgfritt filter
-  "mode": "parallel", // valgfritt — overstyrer defaultMode
-  "systemPrompt": "…", // valgfri overstyring
-  "maxTokens": 4096, // valgfri overstyring
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — API-nøkkel
+### `POST /api/skills/collect/chaos` — API nøkkel
 
-Variant med bearer-token for eksterne kallere. Nøkkelen må ha **Chaos Mode-tillatelsen**
-(`chaosModeEnabled`), som er **av som standard** — aktiver den for hver nøkkel under
-**Kontrollpanel → API Manager → rediger nøkkel → tillatelser → Chaos Mode**. Samme forespørselskropp som ovenfor.
+Bærer-token-variant for eksterne oppringere. Nøkkelen må bære** Chaos Mode-tillatelse** (`chaosModeEnabled`), som er** av som standard** — aktivere det per nøkkel inn** Dashboard → API Manager → edit key → tillatelser → Chaos Mode** . Samme kropp som ovenfor.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -80,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Begge endepunktene returnerer samme struktur:
+Begge endepunktene returnerer samme form:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Begge endepunktene returnerer samme struktur:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // bare i collaborative-modus
+  "summary": "…", // collaborative mode only
 }
 ```
 
 ## Feilsøking
 
-- **`400 Chaos Mode is not enabled`** — se trinn 2 ovenfor: den globale bryteren er av.
-- **API-nøkkelen avvises på `/api/skills/collect/chaos`** — nøkkelen mangler den nøkkelspesifikke
-  `chaosModeEnabled`-tillatelsen (av som standard; dette er en innstilling, ikke en feil).
-- **En leverandør du forventet, mangler i resultatene** — sjekk `providerOverrides` på
-  Chaos Mode-siden (en deaktivert overstyring utelukker den), og om leverandørtilkoblingen er
-  aktiv.
+- **`400 Chaos Mode is not enabled`** — trinn 2 ovenfor: den globale bryteren er av.
+- **API nøkkelen blir avvist på `/api/skills/collect/chaos`** — nøkkelen mangler per-nøkkel `chaosModeEnabled` tillatelsen (av som standard; dette er en innstilling, ikke en feil).
+- **En leverandør viser `No model set for this provider`** — setter sin modell på Chaos Mode-siden eller en standardmodell på sin tilkobling (se Oppsett, trinn 4).
+- **En leverandør du forventet mangler i resultatene** — sjekk `providerOverrides` på Chaos Mode-siden (en deaktivert overstyring utelukker den) og om leverandørtilkoblingen er aktiv.

@@ -4,42 +4,63 @@
 
 ---
 
-> **Dashboard:** **Modalità Chaos** (fil-barra tal-ġenb) → `/dashboard/chaos`  
+> **Dashboard:** **Chaos Mode** (fil-sidebar) → `/dashboard/chaos`  
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (sessjoni tad-dashboard) · `POST /api/skills/collect/chaos` (ċavetta tal-API)  
 > **Sors:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Il-Modalità Chaos tibgħat **kompitu wieħed lil diversi fornituri fl-istess ħin** — kull fornitur parteċipanti
-jikkontribwixxi istanza waħda ta' mudell, u tirċievi t-tweġibiet kollha maġenb xulxin (jew f'katina). Din hija
-superfiċje ta' eżekuzzjoni b'diversi mudelli, mhux strateġija ta' routing: it-traffiku normali tiegħek ta'
+Chaos Mode jibgħat **kompitu wieħed lil diversi fornituri f'daqqa** — kull fornitur parteċipanti
+jikkontribwixxi istanza waħda ta' mudell, u tirċievi t-tweġibiet kollha ħdejn xulxin (jew f'katina). Din hija
+interfaċċa ta' eżekuzzjoni b'diversi mudelli, mhux strateġija ta' direzzjonar: it-traffiku normali tiegħek ta'
 `/v1/chat/completions` qatt ma jiġi affettwat minnha.
 
-**Kjarifika — jiġu inklużi tliet affarijiet differenti li għandhom "chaos" f'isimhom:**
+**Distinzjoni — jiġu pprovduti tliet affarijiet differenti li għandhom "chaos" f'isimhom:**
 
-| Ħaġa                            | X'inhi                                                                                                                                       | Fejn hi ddokumentata                         |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Modalità Chaos**              | Il-paġna tad-dashboard + l-API deskritta hawnhekk: tqassam kompitu wieħed lil ħafna fornituri (b'mod parallel jew kollaborattiv).            | Din il-gwida                                 |
-| `auto/chaos`                    | ID ta' mudell Auto-Combo b'piżijiet ta' punteġġ għall-injezzjoni ta' ħsarat, għall-ittestjar tar-reżiljenza. M'hemm xejn x'jiġi kkonfigurat. | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Konfigurazzjoni tal-combo Chaos | Combo persistenti b'`config.chaos.enabled` tqassam ix-xogħol lil panel b'mudell ta' ġudizzju fakultattiv (permezz tal-API biss).             | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Ħaġa                            | X'inhi                                                                                                                                                                                     | Fejn hi ddokumentata                         |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Chaos Mode**                  | Il-paġna tad-dashboard + l-API deskritta hawnhekk: tqassam kompitu wieħed lil ħafna fornituri (b'mod parallel jew kollaborattiv).                                                          | Din il-gwida                                 |
+| `auto/chaos`                    | ID tal-mudell Auto-Combo: tqassim parallel, mudell wieħed għal kull fornitur, sejħa waħda upstream għal kull wieħed. Mhix injezzjoni ta' ħsarat ([dettalji](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Konfigurazzjoni tal-combo Chaos | Combo persistita b'`config.chaos.enabled` tqassam bl-istess mod (bl-API biss); `judgeModel` jagħżel biss it-tweġiba finali, mingħajr sejħa ta' sinteżi.                                    | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Konfigurazzjoni
+### `auto/chaos`: tqassim parallel
 
-1. Iftaħ **Dashboard → Modalità Chaos** (`/dashboard/chaos`).
-2. **Ixgħelha** — il-Modalità Chaos tiġi **diżattivata b'mod awtomatiku** (`enabled: false` f'
-   `src/lib/chaos/chaosConfig.ts`). Waqt li tkun diżattivata, `POST /api/chaos/run` iwieġeb
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Agħżel il-parteċipanti u l-valuri predefiniti (ippersistiti għal kull istanza permezz tal-maħżen tas-settings):
+`auto/chaos` **mhuwiex** kontroll għall-injezzjoni ta' ħsarat jew għall-ittestjar tar-reżiljenza. Meta titlob
+`model: "auto/chaos"` fuq `/v1/chat/completions`:
 
-   | Qasam               | Tifsira                                                                             | Valur predefinit / limiti                   |
-   | ------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------- |
-   | `enabled`           | Swiċċ ewlieni                                                                       | `false`                                     |
-   | `defaultMode`       | `parallel` jew `collaborative` (ara hawn taħt)                                      | `parallel`                                  |
-   | `providerOverrides` | Parteċipazzjoni għal kull fornitur (`providerId`, `modelId` fakultattiv, `enabled`) | vojt = kull fornitur attiv, massimu ta' 200 |
-   | `systemPrompt`      | Sostituzzjoni tal-prompt tas-sistema Chaos inkorporat                               | fakultattiv, massimu ta' 10 000 karattru    |
-   | `timeoutMs`         | Ħin massimu għal kull sejħa ta' mudell                                              | `120000` (5 000–600 000)                    |
-   | `maxTokens`         | `max_tokens` għal kull sejħa ta' mudell                                             | `4096` (256–128 000)                        |
+1. Jibni panel ta' **mudell wieħed għal kull fornitur**: l-ewwel kandidat ta' kull
+   fornitur konness, skont l-ordni fil-ġabra tal-kandidati, sa 5 membri
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, b'limitu massimu ta' 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Il-pakkett tal-piżijiet `chaos-mode`
+   jistabbilixxi biss il-`weight` ta' kull membru; it-tqassim ma jaqrahx.
+2. Jibgħat l-istess talba lil kull membru tal-panel **b'mod parallel**, għalhekk talba waħda
+   tiswa sejħa upstream waħda għal kull membru tal-panel
+   (`open-sse/services/autoCombo/chaosEngine.ts`, mibgħuta minn
+   `open-sse/services/combo.ts`).
+3. Jistrimja linja waħda tal-istatus għal kull membru tal-panel hekk kif tasal: kumment SSE
+   (`: chaos <index> ok|fail <model>`) b'mod awtomatiku, flimkien ma' avveniment `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) meta t-talba tissettja
+   `stream_options.include_chaos_parts: true`. Dawn ma jinkludu ebda test tat-tweġiba.
+4. Jibgħat **tweġiba waħda** tal-panel bħala l-aħħar blokka fl-istil ta' OpenAI: dik tal-ewwel membru
+   tal-panel (`auto/chaos` jissettjah bħala `judgeModel`) meta jirnexxi, inkella
+   dik tal-aħħar membru li rnexxa. It-tweġibiet l-oħra tal-panel ma jiġux irritornati, għalhekk
+   tħallas għal N sejħiet u tirċievi tlestija waħda.
 
-4. Ħaddem **test mill-paġna stess** — il-panel tar-riżultati juri t-tweġiba,
-   l-istatus u t-tul ta' żmien għal kull fornitur.
+## Setup
+
+1. Miftuħa** Dashboard → Chaos Mode** (`/dashboard/chaos`).
+2. Dawwarha** fuq** — Chaos Mode vapuri** diżattivat awtomatikament** (`enabled: false` fi `src/lib/chaos/chaosConfig.ts`). Waqt li jkun diżabbli, `POST /api/chaos/run` iwieġeb `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Agħżel il-parteċipanti u l-inadempjenzi (persisti kull istanza permezz tal-maħżen tas-settings):
+
+   | Qasam               | Tifsira                                                                              | Default / limiti                     |
+   | ------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
+   | `enabled`           | Swiċċ ewlieni                                                                        | `false`                              |
+   | `defaultMode`       | `parallel` jew `collaborative` (ara hawn taħt)                                       | `parallel`                           |
+   | `providerOverrides` | Parteċipazzjoni għal kull fornitur (`providerId`, `modelId` fakultattiv , `enabled`) | = vojta kull provider attiv, max 200 |
+   | `systemPrompt`      | Override għas-sistema Chaos integrata fil-pront                                      | fakultattiv, max 10 000 chars        |
+   | `timeoutMs`         | Ħin massimu għal kull sejħa mudell                                                   | `120000` (5 000–600 000)             |
+   | `maxTokens`         | `max_tokens` kull model call                                                         | `4096` (256–128 000)                 |
+
+4. Agħti lil kull fornitur parteċipanti a** mudell** . Mudell ta' fornitur huwa ż- `modelId` tal-override ppermettiet tiegħu fuq il-paġna tal-Modalità Chaos (jirbaħ), inkella l-** mudell default** tal-konnessjoni tagħha. Id-fornitur qatt ma jintuża bħala isem tal-mudell. Fornitur ma hu** mhux imsejħa** : jidher fir-riżultati bħala `status: "error"` bil-messaġġ _"L-ebda mudell stabbilit għal dan il-fornitur. Issettja mudell għalih fuq il-paġna tal-Modalità Chaos jew mudell default fuq il-konnessjoni."_ u `modelId` vojta , filwaqt li l-fornituri l-oħra jaħdmu b'mod normali. Jekk l-ebda fornitur magħżul ma jkollu mudell, il-ġirja tfalli qabel kwalunkwe talba upstream bi _"L-ebda fornitur m'għandu sett ta' mudell. ..."_ (HTTP 500 fuq iż-żewġ endpoints).
+5. Mexxi a** test mill-paġna nnifisha** — il-pannell tar-riżultati juri t-tweġiba, l-istatus u t-tul ta' kull fornitur.
 
 ## Modi ta' eżekuzzjoni
 
@@ -51,27 +72,24 @@ superfiċje ta' eżekuzzjoni b'diversi mudelli, mhux strateġija ta' routing: it
 
 ## API
 
-### `POST /api/chaos/run` — sessjoni tad-dashboard
+### `POST /api/chaos/run` — dashboard session
 
-Awtentikat permezz ta' cookie (is-sessjoni tal-ġestjoni — ara
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); jintuża mill-paġna tad-dashboard.
+Cookie awtentikati (is-sessjoni ta' ġestjoni — ara [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); użata mill-paġna tad-dashboard.
 
 ```jsonc
-// korp
+// body
 {
-  "task": "Compare approaches to X", // meħtieġ
-  "providers": ["glm", "kimi"], // filtru fakultattiv
-  "mode": "parallel", // fakultattiv — jissostitwixxi defaultMode
-  "systemPrompt": "…", // sostituzzjoni fakultattiva
-  "maxTokens": 4096, // sostituzzjoni fakultattiva
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — ċavetta tal-API
+### `POST /api/skills/collect/chaos` — API key
 
-Varjant b'token Bearer għal klijenti esterni. Iċ-ċavetta jrid ikollha l-**permess tal-Modalità Chaos**
-(`chaosModeEnabled`), li huwa **mitfi b'mod awtomatiku** — attivah għal kull ċavetta f'
-**Dashboard → API Manager → edit key → permissions → Chaos Mode**. L-istess korp bħal hawn fuq.
+Varjant tal-bearer-token għal min iċempel estern. Iċ-ċavetta għandha ġġorr il-** Permess tal-Modalità Chaos** (`chaosModeEnabled`), li hu** off awtomatikament** — jippermettulha għal kull key in** Dashboard → API Manager → edit key → permessi → Chaos Mode** . L-istess korp bħal hawn fuq.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -80,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Iż-żewġ endpoints jirritornaw l-istess struttura:
+Iż-żewġ endpoints jirritornaw l-istess forma:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Iż-żewġ endpoints jirritornaw l-istess struttura:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // fil-modalità kollaborattiva biss
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## Soluzzjoni tal-problemi
+## Issolvi l-problemi
 
-- **`400 Chaos Mode is not enabled`** — ara l-pass 2 hawn fuq: is-swiċċ globali huwa mitfi.
-- **Iċ-ċavetta tal-API tiġi miċħuda fuq `/api/skills/collect/chaos`** — iċ-ċavetta m'għandhiex il-permess
-  `chaosModeEnabled` speċifiku għaċ-ċavetta (mitfi b'mod awtomatiku; dan huwa setting, mhux żball).
-- **Fornitur li stennejt ma jidhirx fir-riżultati** — iċċekkja `providerOverrides` fil-paġna
-  tal-Modalità Chaos (override diżattivat jeskludih) u jekk il-konnessjoni tal-fornitur hijiex
-  attiva.
+- **`400 Chaos Mode is not enabled`** — pass 2 hawn fuq: is-swiċċ globali huwa mitfi.
+- **API key gets miċħuda fuq `/api/skills/collect/chaos`** — iċ-ċavetta m'għandhiex il-permess `chaosModeEnabled` għal kull ċavetta (off awtomatikament; dan huwa setting, mhux żball).
+- **Provider juri `No model set for this provider`** — issettja l-mudell tiegħu fuq il-paġna tal-Modalità Chaos jew mudell default fuq il-konnessjoni tiegħu (ara Setup, pass 4).
+- **Fornitur li stennejt huwa nieqes mir-riżultati** — iċċekkja `providerOverrides` fuq il-paġna tal-Modalità Chaos (override b'diżabbiltà jeskludih) u jekk il-konnessjoni tal-fornitur hijiex attiva.

@@ -8,38 +8,61 @@
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (boshqaruv paneli sessiyasi) · `POST /api/skills/collect/chaos` (API kaliti)  
 > **Manba:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Chaos Mode **bitta vazifani bir vaqtning oʻzida bir nechta provayderga yuboradi** — har bir ishtirokchi provayder
+Chaos Mode **bitta vazifani bir vaqtning oʻzida bir nechta provayderga yuboradi** — ishtirok etayotgan har bir provayder
 bittadan model nusxasini taqdim etadi va siz barcha javoblarni yonma-yon (yoki zanjirlangan holda) olasiz. Bu
-marshrutlash strategiyasi emas, balki koʻp modelli bajarish vositasidir: odatiy `/v1/chat/completions`
+marshrutlash strategiyasi emas, balki bir nechta modelni ishga tushirish vositasidir: odatiy `/v1/chat/completions`
 trafikingizga u hech qachon taʼsir qilmaydi.
 
-**Farqlash — nomida "chaos" boʻlgan uch xil narsa taqdim etiladi:**
+**Aniqlik kiritish — nomida "chaos" boʻlgan uch xil narsa taqdim etiladi:**
 
-| Narsa                                 | Bu nima                                                                                                                                      | Hujjat joylashuvi                            |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**                        | Bu yerda tavsiflangan boshqaruv paneli sahifasi + API: bitta vazifani koʻplab provayderlarga tarqatadi (parallel yoki hamkorlikda).          | Ushbu qoʻllanma                              |
-| `auto/chaos`                          | Barqarorlikni sinash uchun nosozlik kiritishga asoslangan baholash vaznlariga ega Auto-Combo model identifikatori. Sozlash talab qilinmaydi. | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos kombinatsiyasi konfiguratsiyasi | `config.chaos.enabled` bilan saqlanadigan kombinatsiya vazifani ixtiyoriy hakam modeli mavjud panelga tarqatadi (faqat API orqali).          | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Narsa                        | Bu nima                                                                                                                                                                                                       | Hujjatlashtirilgan joy                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**               | Bu yerda tasvirlangan boshqaruv paneli sahifasi va API: bitta vazifani koʻplab provayderlarga tarqatish (parallel yoki hamkorlikda).                                                                          | Ushbu qoʻllanma                              |
+| `auto/chaos`                 | Auto-Combo model identifikatori: parallel tarqatish, har bir provayderdan bittadan model, har biri uchun bittadan yuqori oqim chaqiruvi. Nosozlik kiritish emas ([tafsilotlar](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Chaos combo konfiguratsiyasi | `config.chaos.enabled` bilan saqlanadigan combo xuddi shu tarzda tarqatadi (faqat API orqali); `judgeModel` faqat yakuniy javobni tanlaydi, sintez chaqiruvi amalga oshirilmaydi.                             | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`: parallel tarqatish
+
+`auto/chaos` nosozlik kiritish yoki barqarorlikni sinash uchun **moʻljallanmagan**. `/v1/chat/completions` orqali
+`model: "auto/chaos"` soʻralganda:
+
+1. **Har bir provayderdan bittadan model**dan iborat panel tuziladi: har bir
+   ulangan provayderning nomzodlar havzasi tartibidagi birinchi nomzodi, koʻpi bilan 5 ta aʼzogacha
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, yuqori chegarasi 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). `chaos-mode` vaznlar
+   toʻplami faqat har bir aʼzoning `weight` qiymatini belgilaydi; tarqatish uni oʻqimaydi.
+2. Bir xil soʻrov har bir panel aʼzosiga **parallel ravishda** yuboriladi, shuning uchun bitta soʻrov
+   har bir panel aʼzosi uchun bittadan yuqori oqim chaqiruviga teng xarajat qiladi
+   (`open-sse/services/autoCombo/chaosEngine.ts`, quyidagi manbadan yuboriladi:
+   `open-sse/services/combo.ts`).
+3. Har bir panel aʼzosi natijasi kelishi bilan unga tegishli bittadan holat qatori uzatiladi: sukut boʻyicha
+   SSE izohi (`: chaos <index> ok|fail <model>`), shuningdek, soʻrovda
+   `stream_options.include_chaos_parts: true` oʻrnatilgan boʻlsa, `omni-chaos-part`
+   hodisasi (`model`, `index`, `ok`, `error`). Ular javob matnini oʻz ichiga olmaydi.
+4. Yakuniy OpenAI uslubidagi parcha sifatida panelning **bitta** javobi yuboriladi: birinchi panel
+   aʼzosining javobi (`auto/chaos` uni `judgeModel` sifatida belgilaydi), agar u muvaffaqiyatli boʻlsa, aks holda
+   oxirgi muvaffaqiyatli aʼzoning javobi. Panelning boshqa javoblari qaytarilmaydi, shu sababli
+   siz N ta chaqiruv uchun toʻlaysiz va bitta yakunlangan javob olasiz.
 
 ## Sozlash
 
-1. **Boshqaruv paneli → Chaos Mode** (`/dashboard/chaos`) sahifasini oching.
-2. Uni **yoqing** — Chaos Mode standart holatda **oʻchirilgan** (`src/lib/chaos/chaosConfig.ts`
-   ichida `enabled: false`). U oʻchirilgan paytda `POST /api/chaos/run` quyidagi javobni qaytaradi:
+1. **Dashboard → Chaos Mode** (`/dashboard/chaos`) sahifasini oching.
+2. Uni **yoqing** — Chaos Mode sukut bo‘yicha **o‘chirilgan** (`enabled: false` in
+   `src/lib/chaos/chaosConfig.ts`). O‘chirilgan holatda `POST /api/chaos/run` quyidagi javobni qaytaradi:
    `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Ishtirokchilar va standart qiymatlarni tanlang (sozlamalar ombori orqali har bir nusxa uchun saqlanadi):
+3. Ishtirokchilar va standart qiymatlarni tanlang (sozlamalar do‘koni orqali har bir instansiya uchun saqlanadi):
 
-   | Maydon              | Maʼnosi                                                                                     | Standart qiymat / cheklovlar                 |
-   | ------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
-   | `enabled`           | Asosiy kalit                                                                                | `false`                                      |
-   | `defaultMode`       | `parallel` yoki `collaborative` (quyiga qarang)                                             | `parallel`                                   |
-   | `providerOverrides` | Har bir provayder uchun ishtirok sozlamalari (`providerId`, ixtiyoriy `modelId`, `enabled`) | boʻsh = har bir faol provayder, maksimum 200 |
-   | `systemPrompt`      | Ichki Chaos tizim koʻrsatmasini almashtirish                                                | ixtiyoriy, maksimum 10 000 ta belgi          |
-   | `timeoutMs`         | Har bir model chaqiruvi uchun maksimal vaqt                                                 | `120000` (5 000–600 000)                     |
-   | `maxTokens`         | Har bir model chaqiruvi uchun `max_tokens`                                                  | `4096` (256–128 000)                         |
+   | Maydon              | Ma’nosi                                                                        | Standart qiymat / cheklovlar                         |
+   | ------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
+   | `enabled`           | Asosiy yoqish/o‘chirish tugmasi                                                | `false`                                              |
+   | `defaultMode`       | `parallel` yoki `collaborative` (quyida ko‘rsatilgan)                          | `parallel`                                           |
+   | `providerOverrides` | Har bir provayderning ishtiroki (`providerId`, ixtiyoriy `modelId`, `enabled`) | bo‘sh = barcha faol provayderlar, ko‘pi bilan 200 ta |
+   | `systemPrompt`      | O‘rnatilgan Chaos tizim prompti o‘rniga ishlatiladigan qiymat                  | ixtiyoriy, ko‘pi bilan 10 000 ta belgi               |
+   | `timeoutMs`         | Har bir model chaqiruvi uchun maksimal vaqt                                    | `120000` (5 000–600 000)                             |
+   | `maxTokens`         | Har bir model chaqiruvi uchun `max_tokens`                                     | `4096` (256–128 000)                                 |
 
-4. **Sinovni sahifaning oʻzidan ishga tushiring** — natijalar panelida har bir provayderning javobi,
-   holati va davomiyligi koʻrsatiladi.
+4. Har bir ishtirokchi provayderga **model** bering. Provayder modeli Chaos Mode sahifasidagi yoqilgan override’ning `modelId` qiymatidir (u ustunlik qiladi), aks holda provayder ulanishining **standart modeli** ishlatiladi. Provayder identifikatori hech qachon model nomi sifatida ishlatilmaydi. Ikkalasiga ham ega bo‘lmagan provayderga **chaqiruv amalga oshirilmaydi**: u natijalarda `status: "error"` holati va _"No model set for this provider. Set a model for it on the Chaos Mode page or a default model on the connection."_ xabari bilan ko‘rsatiladi, `modelId` esa bo‘sh bo‘ladi; boshqa provayderlar odatdagidek ishlaydi. Agar tanlangan provayderlarning hech birida model bo‘lmasa, ishga tushirish yuqori oqimga biror so‘rov yuborilishidan oldin _"No provider has a model set. …"_ xabari bilan muvaffaqiyatsiz tugaydi (ikkala endpointda ham HTTP 500).
+5. **Sahifaning o‘zidan testni ishga tushiring** — natijalar panelida har bir provayderning javobi, holati va davomiyligi ko‘rsatiladi.
 
 ## Bajarish rejimlari
 
@@ -51,36 +74,35 @@ trafikingizga u hech qachon taʼsir qilmaydi.
 
 ## API
 
-### `POST /api/chaos/run` — boshqaruv paneli sessiyasi
+### `POST /api/chaos/run` — dashboard sessiyasi
 
-Cookie orqali autentifikatsiya qilinadi (boshqaruv sessiyasi — qarang:
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); boshqaruv paneli sahifasi tomonidan ishlatiladi.
+Cookie orqali autentifikatsiya qilinadi (boshqaruv sessiyasi — [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ga qarang); dashboard sahifasi tomonidan foydalaniladi.
 
 ```jsonc
-// soʻrov tanasi
+// body
 {
-  "task": "X uchun yondashuvlarni taqqoslang", // majburiy
+  "task": "X ga yondashuvlarni taqqoslang", // majburiy
   "providers": ["glm", "kimi"], // ixtiyoriy filtr
-  "mode": "parallel", // ixtiyoriy — defaultMode qiymatini almashtiradi
-  "systemPrompt": "…", // ixtiyoriy almashtirish
-  "maxTokens": 4096, // ixtiyoriy almashtirish
+  "mode": "parallel", // ixtiyoriy — defaultMode qiymatini bekor qiladi
+  "systemPrompt": "…", // ixtiyoriy qayta belgilash
+  "maxTokens": 4096, // ixtiyoriy qayta belgilash
 }
 ```
 
 ### `POST /api/skills/collect/chaos` — API kaliti
 
-Tashqi chaqiruvchilar uchun Bearer-token varianti. Kalitda **Chaos Mode ruxsati**
-(`chaosModeEnabled`) boʻlishi kerak; u **standart holatda oʻchirilgan** — uni har bir kalit uchun
-**Boshqaruv paneli → API Manager → kalitni tahrirlash → ruxsatlar → Chaos Mode** orqali yoqing. Soʻrov tanasi yuqoridagisi bilan bir xil.
+Tashqi chaqiruvchilar uchun Bearer-token varianti. Kalitda **Chaos Mode permission**
+(`chaosModeEnabled`) bo‘lishi kerak; u **standart bo‘yicha o‘chirilgan** — har bir kalit uchun uni
+**Dashboard → API Manager → edit key → permissions → Chaos Mode** orqali yoqing. Body yuqoridagidek.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -H "Authorization: Bearer $OMNIROUTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"task":"X uchun yondashuvlarni taqqoslang","mode":"parallel"}'
+  -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Har ikkala endpoint bir xil tuzilishdagi javobni qaytaradi:
+Har ikkala endpoint ham bir xil shaklni qaytaradi:
 
 ```jsonc
 {
@@ -99,15 +121,16 @@ Har ikkala endpoint bir xil tuzilishdagi javobni qaytaradi:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // faqat collaborative rejimida
+  "summary": "…", // faqat hamkorlik rejimida
 }
 ```
 
 ## Muammolarni bartaraf etish
 
-- **`400 Chaos Mode is not enabled`** — yuqoridagi 2-bosqich: global kalit oʻchirilgan.
-- **API kaliti `/api/skills/collect/chaos` endpointida rad etilmoqda** — kalitda alohida kalit uchun
-  `chaosModeEnabled` ruxsati yoʻq (standart holatda oʻchirilgan; bu xato emas, balki sozlama).
-- **Siz kutgan provayder natijalarda yoʻq** — Chaos Mode sahifasidagi `providerOverrides`
-  sozlamasini (oʻchirilgan almashtirish uni chiqarib tashlaydi) va provayder ulanishi faol ekanini
-  tekshiring.
+- **`400 Chaos Mode is not enabled`** — yuqoridagi 2-qadam: global almashtirgich o‘chirilgan.
+- **`/api/skills/collect/chaos` manzilida API kaliti rad etiladi** — kalitda har bir kalit uchun
+  `chaosModeEnabled` ruxsati mavjud emas (standart bo‘yicha o‘chirilgan; bu sozlama, xato emas).
+- **Provayderda `No model set for this provider` ko‘rsatiladi** — uning modelini Chaos Mode sahifasida
+  yoki ulanishida standart modelni o‘rnating (Sozlash, 4-qadamga qarang).
+- **Siz kutgan provayder natijalarda yo‘q** — Chaos Mode sahifasidagi `providerOverrides` sozlamasini
+  (o‘chirilgan override uni istisno qiladi) va provayder ulanishi faol ekanini tekshiring.

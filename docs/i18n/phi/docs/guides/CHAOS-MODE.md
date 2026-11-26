@@ -8,35 +8,59 @@
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (session ng dashboard) · `POST /api/skills/collect/chaos` (API key)  
 > **Source:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Nagpapadala ang Chaos Mode ng **isang gawain sa maraming provider nang sabay-sabay** — nag-aambag ang bawat kalahok na provider ng isang instance ng model, at makukuha mo ang lahat ng sagot nang magkakatabi (o magkakasunod). Isa itong surface para sa multi-model execution, hindi isang routing strategy: hindi nito kailanman naaapektuhan ang karaniwan mong traffic sa `/v1/chat/completions`.
+Nagpapadala ang Chaos Mode ng **isang gawain sa ilang provider nang sabay-sabay** — nag-aambag ang bawat kalahok na provider
+ng isang instance ng modelo, at makukuha mo ang lahat ng sagot nang magkakatabi (o magkakasunod na nakakadena). Isa itong
+surface para sa pagpapatakbo ng maraming modelo, hindi isang diskarte sa pagruruta: hindi nito kailanman naaapektuhan ang iyong karaniwang trapiko sa
+`/v1/chat/completions`.
 
-**Paglilinaw — tatlong magkakaibang bagay ang may "chaos" sa pangalan:**
+**Paglilinaw — tatlong magkakaibang bagay ang inilalabas na may "chaos" sa pangalan:**
 
-| Bagay              | Ano ito                                                                                                                           | Saan nakadokumento                           |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**     | Ang dashboard page + API na inilalarawan dito: ipamahagi ang isang gawain sa maraming provider (parallel o collaborative).        | Ang gabay na ito                             |
-| `auto/chaos`       | Isang Auto-Combo model id na may fault-injection scoring weights, para sa resilience testing. Walang kailangang i-configure.      | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos combo config | Isang naka-persist na combo na may `config.chaos.enabled` na namamahagi sa isang panel na may opsyonal na judge model (API-only). | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Bagay              | Ano ito                                                                                                                                                                                  | Saan nakadokumento                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**     | Ang pahina ng dashboard + API na inilalarawan dito: ipamahagi ang isang gawain sa maraming provider (parallel o collaborative).                                                          | Ang gabay na ito                             |
+| `auto/chaos`       | Model id ng Auto-Combo: parallel na pamamahagi, isang modelo bawat provider, tig-isang upstream call. Hindi fault injection ([mga detalye](#autochaos-parallel-fan-out)).                | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Chaos combo config | Isang naka-persist na combo na may `config.chaos.enabled` na namamahagi sa parehong paraan (API-only); pinipili lamang ng `judgeModel` ang panghuling sagot, nang walang synthesis call. | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Pag-set up
+### `auto/chaos`: parallel na pamamahagi
 
-1. Buksan ang **Dashboard → Chaos Mode** (`/dashboard/chaos`).
-2. **I-on** ito — naka-**disable bilang default** ang Chaos Mode (`enabled: false` sa
-   `src/lib/chaos/chaosConfig.ts`). Habang naka-disable, sumasagot ang `POST /api/chaos/run` ng
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Piliin ang mga kalahok at default (naka-persist bawat instance sa pamamagitan ng settings store):
+Ang `auto/chaos` ay **hindi** isang kontrol para sa fault injection o pagsusuri ng resilience. Kapag humiling ng
+`model: "auto/chaos"` sa `/v1/chat/completions`:
 
-   | Field               | Kahulugan                                                                      | Default / mga limitasyon                        |
-   | ------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------- |
-   | `enabled`           | Pangunahing switch                                                             | `false`                                         |
-   | `defaultMode`       | `parallel` o `collaborative` (tingnan sa ibaba)                                | `parallel`                                      |
-   | `providerOverrides` | Pakikilahok ng bawat provider (`providerId`, opsyonal na `modelId`, `enabled`) | walang laman = bawat aktibong provider, max 200 |
-   | `systemPrompt`      | Override para sa built-in na Chaos system prompt                               | opsyonal, max 10 000 character                  |
-   | `timeoutMs`         | Pinakamahabang oras sa bawat model call                                        | `120000` (5 000–600 000)                        |
-   | `maxTokens`         | `max_tokens` sa bawat model call                                               | `4096` (256–128 000)                            |
+1. Bumubuo ito ng panel na may **isang modelo bawat provider**: ang unang kandidato ng bawat
+   nakakonektang provider, ayon sa pagkakasunod-sunod sa candidate pool, hanggang 5 miyembro
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, limitado sa 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Itinatakda lamang ng `chaos-mode` weight
+   pack ang `weight` ng bawat miyembro; hindi ito binabasa ng pamamahagi.
+2. Ipinapadala nito ang parehong request sa bawat miyembro ng panel **nang sabay-sabay**, kaya ang isang request
+   ay nagkakahalaga ng isang upstream call bawat miyembro ng panel
+   (`open-sse/services/autoCombo/chaosEngine.ts`, ipinapadala mula sa
+   `open-sse/services/combo.ts`).
+3. Nag-i-stream ito ng isang status line bawat miyembro ng panel habang dumarating ang resulta: isang SSE comment
+   (`: chaos <index> ok|fail <model>`) bilang default, kasama ang isang `omni-chaos-part`
+   event (`model`, `index`, `ok`, `error`) kapag itinakda ng request ang
+   `stream_options.include_chaos_parts: true`. Walang nilalamang teksto ng sagot ang mga ito.
+4. Nagpapadala ito ng **isang** sagot mula sa panel bilang panghuling chunk na OpenAI-style: ang sagot ng unang miyembro ng panel
+   (itinatalaga ito ng `auto/chaos` bilang `judgeModel`) kapag matagumpay ito, o kung hindi,
+   ang sagot ng huling matagumpay na miyembro. Hindi ibinabalik ang iba pang sagot ng panel, kaya
+   nagbabayad ka para sa N call ngunit isang completion lamang ang natatanggap mo.
 
-4. Magpatakbo ng **test mula mismo sa page** — ipinapakita ng results panel ang sagot,
-   status, at tagal ng bawat provider.
+## Setup
+
+1. Bukas** Dashboard → Chaos Mode** (`/dashboard/chaos`).
+2. Lumiko ito** sa** — Chaos Mode ships** hindi pinagana bilang default** (`enabled: false` sa `src/lib/chaos/chaosConfig.ts`). Habang naka-disable, sinasagot `POST /api/chaos/run` `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Piliin ang mga kalahok at mga default (nagpatuloy bawat pagkakataon sa pamamagitan ng tindahan ng mga setting):
+
+   | Patlang             | Ibig sabihin                                                                | Default / limitasyon                            |
+   | ------------------- | --------------------------------------------------------------------------- | ----------------------------------------------- |
+   | `enabled`           | Master switch                                                               | `false`                                         |
+   | `defaultMode`       | `parallel` o `collaborative` (tingnan sa ibaba)                             | `parallel`                                      |
+   | `providerOverrides` | Paglahok ng bawat provider (`providerId`, opsyonal na `modelId`, `enabled`) | walang laman = bawat aktibong provider, max 200 |
+   | `systemPrompt`      | I-override para sa built-in na Chaos system prompt                          | opsyonal, max 10 000 char                       |
+   | `timeoutMs`         | Max na oras sa bawat modelong tawag                                         | `120000` (5 000–600 000)                        |
+   | `maxTokens`         | `max_tokens` sa bawat modelong tawag                                        | `4096` (256–128 000)                            |
+
+4. Bigyan ang bawat kalahok na tagapagkaloob ng a** modelo** . Ang modelo ng provider ay ang `modelId` ng pinagana nitong override sa page ng Chaos Mode (panalo ito), kung hindi, ang** default na modelo** ng koneksyon nito. Ang isang provider id ay hindi kailanman ginagamit bilang isang pangalan ng modelo. Isang provider na wala ni isa** hindi tinawag** : lumalabas ito sa mga resulta bilang `status: "error"` na may mensaheng _"Walang nakatakdang modelo para sa provider na ito. Magtakda ng modelo para dito sa page ng Chaos Mode o isang default na modelo sa koneksyon."_ at isang walang laman `modelId`, habang tumatakbo nang normal ang iba pang mga provider. Kung walang napiling provider na may modelo, mabibigo ang pagtakbo bago ang anumang upstream na kahilingan sa _"Walang provider ang may set ng modelo. ..."_ (HTTP 500 sa parehong mga endpoint).
+5. Takbo a** pagsubok mula sa mismong pahina** — ipinapakita ng panel ng mga resulta ang sagot, katayuan at tagal ng bawat provider.
 
 ## Mga mode ng execution
 
@@ -48,27 +72,24 @@ Nagpapadala ang Chaos Mode ng **isang gawain sa maraming provider nang sabay-sab
 
 ## API
 
-### `POST /api/chaos/run` — session ng dashboard
+### `POST /api/chaos/run` — dashboard session
 
-Cookie-authenticated (ang management session — tingnan ang
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); ginagamit ng dashboard page.
+Cookie-authenticated (ang session ng pamamahala — tingnan ang [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); ginagamit ng pahina ng dashboard.
 
 ```jsonc
 // body
 {
-  "task": "Compare approaches to X", // kinakailangan
-  "providers": ["glm", "kimi"], // opsyonal na filter
-  "mode": "parallel", // opsyonal — ino-override ang defaultMode
-  "systemPrompt": "…", // opsyonal na override
-  "maxTokens": 4096, // opsyonal na override
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
 ### `POST /api/skills/collect/chaos` — API key
 
-Variant na gumagamit ng bearer token para sa mga external caller. Dapat taglay ng key ang **pahintulot sa Chaos Mode**
-(`chaosModeEnabled`), na **naka-off bilang default** — i-enable ito sa bawat key sa
-**Dashboard → API Manager → i-edit ang key → mga pahintulot → Chaos Mode**. Pareho ang body sa nasa itaas.
+Bearer-token na variant para sa mga external na tumatawag. Dapat dalhin ng susi ang** Pahintulot sa Chaos Mode** (`chaosModeEnabled`), na** naka-off bilang default** — paganahin ito sa bawat key in** Dashboard → API Manager → edit key → mga pahintulot → Chaos Mode** . Parehong katawan tulad ng nasa itaas.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -77,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Pareho ang hugis ng ibinabalik ng dalawang endpoint:
+Ang parehong mga endpoint ay nagbabalik ng parehong hugis:
 
 ```jsonc
 {
@@ -96,15 +117,13 @@ Pareho ang hugis ng ibinabalik ng dalawang endpoint:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // collaborative mode lamang
+  "summary": "…", // collaborative mode only
 }
 ```
 
 ## Pag-troubleshoot
 
 - **`400 Chaos Mode is not enabled`** — hakbang 2 sa itaas: naka-off ang global switch.
-- **Tinatanggihan ang API key sa `/api/skills/collect/chaos`** — wala sa key ang pahintulot na
-  `chaosModeEnabled` para sa bawat key (naka-off bilang default; isa itong setting, hindi error).
-- **Wala sa mga resulta ang isang provider na inaasahan mo** — tingnan ang `providerOverrides` sa
-  page ng Chaos Mode (hindi isinasama ng naka-disable na override ang provider) at kung aktibo ang
-  koneksyon ng provider.
+- **API key ay tinatanggihan sa `/api/skills/collect/chaos`** — ang key ay kulang sa per-key `chaosModeEnabled` na pahintulot (naka-off bilang default; ito ay isang setting, hindi isang error).
+- **Ang isang provider ay nagpapakita `No model set for this provider`** itinakda — ang modelo nito sa page ng Chaos Mode o isang default na modelo sa koneksyon nito (tingnan ang Setup, hakbang 4).
+- **Ang isang provider na iyong inaasahan ay nawawala sa mga resulta** — check `providerOverrides` sa page ng Chaos Mode (hindi kasama ang isang naka-disable na override) at kung aktibo ang koneksyon ng provider.

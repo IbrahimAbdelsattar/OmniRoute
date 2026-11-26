@@ -9,37 +9,58 @@
 > **Source :** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
 Le Mode Chaos envoie **une tâche à plusieurs fournisseurs simultanément** — chaque fournisseur participant
-apporte une instance de modèle, et vous obtenez toutes les réponses côte à côte (ou en chaîne). Il s'agit
-d'une interface d'exécution multimodèle, et non d'une stratégie de routage : votre trafic
-`/v1/chat/completions` habituel n'est jamais affecté.
+contribue avec une instance de modèle, et vous obtenez toutes les réponses côte à côte (ou enchaînées). Il s'agit
+d'une surface d'exécution multimodèle, et non d'une stratégie de routage : votre trafic habituel
+`/v1/chat/completions` n'est jamais affecté.
 
 **Clarification — trois éléments différents comportent « chaos » dans leur nom :**
 
-| Élément                      | Description                                                                                                                                        | Documentation                                |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Mode Chaos**               | La page du tableau de bord et l'API décrites ici : diffuser une tâche vers plusieurs fournisseurs (en parallèle ou en collaboration).              | Ce guide                                     |
-| `auto/chaos`                 | Un identifiant de modèle Auto-Combo avec des pondérations de notation par injection de pannes, destiné aux tests de résilience. Rien à configurer. | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Configuration de combo Chaos | Un combo persistant avec `config.chaos.enabled` diffuse la tâche vers un panel avec un modèle juge facultatif (API uniquement).                    | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Élément                      | Description                                                                                                                                                                                          | Documentation                                |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Mode Chaos**               | La page du tableau de bord et l'API décrites ici : distribue une tâche à de nombreux fournisseurs (en parallèle ou de manière collaborative).                                                        | Ce guide                                     |
+| `auto/chaos`                 | Identifiant de modèle Auto-Combo : distribution parallèle, un modèle par fournisseur, avec un appel en amont chacun. Ce n'est pas de l'injection de pannes ([détails](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Configuration de combo Chaos | Un combo persistant avec `config.chaos.enabled` effectue la même distribution (API uniquement) ; `judgeModel` sélectionne seulement la réponse finale, sans appel de synthèse.                       | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Configuration
+### `auto/chaos` : distribution parallèle
 
-1. Ouvrez **Tableau de bord → Mode Chaos** (`/dashboard/chaos`).
-2. **Activez-le** — le Mode Chaos est fourni **désactivé par défaut** (`enabled: false` dans
-   `src/lib/chaos/chaosConfig.ts`). Lorsqu'il est désactivé, `POST /api/chaos/run` renvoie
-   `400 — "Le Mode Chaos n'est pas activé. Activez-le dans Tableau de bord → Mode Chaos."`.
-3. Choisissez les participants et les valeurs par défaut (conservés pour chaque instance via le stockage des paramètres) :
+`auto/chaos` n'est **pas** un mécanisme d'injection de pannes ni de test de résilience. Une requête avec
+`model: "auto/chaos"` sur `/v1/chat/completions` :
 
-   | Champ               | Signification                                                                 | Valeur par défaut / limites                   |
-   | ------------------- | ----------------------------------------------------------------------------- | --------------------------------------------- |
-   | `enabled`           | Interrupteur principal                                                        | `false`                                       |
-   | `defaultMode`       | `parallel` ou `collaborative` (voir ci-dessous)                               | `parallel`                                    |
-   | `providerOverrides` | Participation par fournisseur (`providerId`, `modelId` facultatif, `enabled`) | vide = tous les fournisseurs actifs, 200 max. |
-   | `systemPrompt`      | Remplacement du prompt système Chaos intégré                                  | facultatif, 10 000 caractères max.            |
-   | `timeoutMs`         | Durée maximale de chaque appel de modèle                                      | `120000` (5 000–600 000)                      |
-   | `maxTokens`         | `max_tokens` par appel de modèle                                              | `4096` (256–128 000)                          |
+1. Constitue un panel d'**un modèle par fournisseur** : le premier candidat de chaque
+   fournisseur connecté, dans l'ordre du groupe de candidats, jusqu'à 5 membres
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, plafonné à 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Le jeu de pondérations `chaos-mode`
+   définit uniquement le `weight` de chaque membre ; la distribution ne le consulte pas.
+2. Envoie la même requête à chaque membre du panel **en parallèle** ; une requête
+   coûte donc un appel en amont par membre du panel
+   (`open-sse/services/autoCombo/chaosEngine.ts`, déclenché depuis
+   `open-sse/services/combo.ts`).
+3. Diffuse une ligne d'état par membre du panel au fur et à mesure de son arrivée : un commentaire SSE
+   (`: chaos <index> ok|fail <model>`) par défaut, ainsi qu'un événement `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) lorsque la requête définit
+   `stream_options.include_chaos_parts: true`. Ceux-ci ne contiennent aucun texte de réponse.
+4. Envoie **une seule** réponse du panel comme bloc final au format OpenAI : celle du premier membre
+   du panel (`auto/chaos` le définit comme `judgeModel`) en cas de réussite, sinon
+   celle du dernier membre ayant réussi. Les autres réponses du panel ne sont pas renvoyées :
+   vous payez donc pour N appels et ne recevez qu'une seule complétion.
 
-4. Lancez un **test directement depuis la page** — le panneau de résultats affiche la réponse,
-   l'état et la durée de chaque fournisseur.
+## Installation
+
+1. Ouvrir** Tableau de bord → Chaos Mode** (`/dashboard/chaos`).
+2. Tournez-le** sur** Navires — mode Chaos** désactivé par défaut** (`enabled: false` dans `src/lib/chaos/chaosConfig.ts`). Lorsqu'il est désactivé, `POST /api/chaos/run` répond `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Choisissez les participants et les valeurs par défaut (conservées par instance via le magasin de paramètres) :
+
+   | Champ               | Signification                                                                  | Valeur par défaut/limites                     |
+   | ------------------- | ------------------------------------------------------------------------------ | --------------------------------------------- |
+   | `enabled`           | Interrupteur principal                                                         | `false`                                       |
+   | `defaultMode`       | `parallel` ou `collaborative` (voir ci-dessous)                                | `parallel`                                    |
+   | `providerOverrides` | Participation par fournisseur (`providerId`, `modelId` facultatif , `enabled`) | = vide pour chaque fournisseur actif, max 200 |
+   | `systemPrompt`      | Remplacer l'invite système Chaos intégrée                                      | facultatif, max 10 000 caractères             |
+   | `timeoutMs`         | Durée maximale par appel de modèle                                             | `120000` (5 000–600 000)                      |
+   | `maxTokens`         | `max_tokens` par appel de modèle                                               | `4096` (256–128 000)                          |
+
+4. Donnez à chaque fournisseur participant un** modèle** . Le modèle d'un fournisseur est le `modelId` de son remplacement activé sur la page Chaos Mode (il gagne), sinon le** modèle par défaut** de sa connexion. Un identifiant de fournisseur n’est jamais utilisé comme nom de modèle. Un fournisseur sans aucun des deux n'est** pas appelé** : il apparaît dans les résultats sous la forme `status: "error"` avec le message _"Aucun modèle défini pour ce fournisseur. Définissez un modèle pour celui-ci sur la page Chaos Mode ou un modèle par défaut sur la connexion."_ et un `modelId` vide, tandis que les autres fournisseurs fonctionnent normalement. Si aucun fournisseur sélectionné n'a de modèle, l'exécution échoue avant toute requête en amont avec _"Aucun fournisseur n'a de modèle défini. …"_ (HTTP 500 sur les deux points de terminaison).
+5. Exécutez un** tester depuis la page elle-même** — le panneau de résultats affiche la réponse, le statut et la durée de chaque fournisseur.
 
 ## Modes d'exécution
 
@@ -51,36 +72,33 @@ d'une interface d'exécution multimodèle, et non d'une stratégie de routage : 
 
 ## API
 
-### `POST /api/chaos/run` — session du tableau de bord
+### session de tableau de bord `POST /api/chaos/run` —
 
-Authentification par cookie (la session de gestion — voir
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)) ; utilisé par la page du tableau de bord.
+Authentifié par cookie (la session de gestion — voir [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); utilisé par la page du tableau de bord.
 
 ```jsonc
-// corps
+// body
 {
-  "task": "Comparer les approches de X", // obligatoire
-  "providers": ["glm", "kimi"], // filtre facultatif
-  "mode": "parallel", // facultatif — remplace defaultMode
-  "systemPrompt": "…", // remplacement facultatif
-  "maxTokens": 4096, // remplacement facultatif
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — clé API
+### clé `POST /api/skills/collect/chaos` — API
 
-Variante avec jeton Bearer destinée aux appelants externes. La clé doit disposer de l'**autorisation Mode Chaos**
-(`chaosModeEnabled`), qui est **désactivée par défaut** — activez-la pour chaque clé dans
-**Tableau de bord → Gestionnaire d'API → modifier la clé → autorisations → Mode Chaos**. Le corps est identique à celui ci-dessus.
+Variante de jeton au porteur pour les appelants externes. La clé doit porter le** Autorisation du mode Chaos** (`chaosModeEnabled`), qui est** désactivé par défaut** — l'active par clé** Tableau de bord → API Manager → modifier la clé autorisations → → Chaos Mode** . Même corps que ci-dessus.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -H "Authorization: Bearer $OMNIROUTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"task":"Comparer les approches de X","mode":"parallel"}'
+  -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Les deux points de terminaison renvoient la même structure :
+Les deux points de terminaison renvoient la même forme :
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Les deux points de terminaison renvoient la même structure :
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // mode collaboratif uniquement
+  "summary": "…", // collaborative mode only
 }
 ```
 
 ## Dépannage
 
-- **`400 Le Mode Chaos n'est pas activé`** — consultez l'étape 2 ci-dessus : l'interrupteur global est désactivé.
-- **La clé API est rejetée sur `/api/skills/collect/chaos`** — la clé ne dispose pas de l'autorisation
-  `chaosModeEnabled` propre à cette clé (désactivée par défaut ; il s'agit d'un paramètre, pas d'une erreur).
-- **Un fournisseur attendu ne figure pas dans les résultats** — vérifiez `providerOverrides` sur la
-  page Mode Chaos (un remplacement désactivé l'exclut) et assurez-vous que la connexion au fournisseur est
-  active.
+- **`400 Chaos Mode is not enabled`** — étape 2 ci-dessus : le commutateur global est désactivé.
+- **La clé API est rejetée sur `/api/skills/collect/chaos`** — la clé ne dispose pas de l'autorisation `chaosModeEnabled` par clé (désactivée par défaut ; il s'agit d'un paramètre, pas d'une erreur).
+- **Un fournisseur montre `No model set for this provider`** — définit son modèle sur la page Chaos Mode ou un modèle par défaut sur sa connexion (voir Configuration, étape 4).
+- **Un prestataire que vous attendiez est absent des résultats** — vérifie `providerOverrides` sur la page Chaos Mode (un remplacement désactivé l'exclut) et si la connexion du fournisseur est active.

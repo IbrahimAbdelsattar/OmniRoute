@@ -4,42 +4,64 @@
 
 ---
 
-> **Kontrol Paneli:** **Kaos Modu** (kenar çubuğu) → `/dashboard/chaos`  
+> **Kontrol Paneli:** **Chaos Mode** (kenar çubuğu) → `/dashboard/chaos`  
 > **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (kontrol paneli oturumu) · `POST /api/skills/collect/chaos` (API anahtarı)  
 > **Kaynak:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Kaos Modu, **tek bir görevi aynı anda birden fazla sağlayıcıya gönderir** — katılan her sağlayıcı
-bir model örneğiyle katkıda bulunur ve tüm yanıtları yan yana (veya zincirlenmiş olarak) alırsınız.
-Bu, bir yönlendirme stratejisi değil, çok modelli bir yürütme yüzeyidir: normal
-`/v1/chat/completions` trafiğiniz bundan hiçbir zaman etkilenmez.
+Chaos Mode, **bir görevi aynı anda birden fazla sağlayıcıya gönderir** — katılan her sağlayıcı
+bir model örneğiyle katkıda bulunur ve tüm yanıtları yan yana (veya zincirlenmiş olarak) alırsınız. Bu,
+bir yönlendirme stratejisi değil, çok modelli bir yürütme yüzeyidir: normal `/v1/chat/completions`
+trafiğiniz bundan hiçbir zaman etkilenmez.
 
-**Açıklama — adında "chaos" geçen üç farklı şey sunulur:**
+**Açıklama — adında "chaos" bulunan üç farklı şey sunulur:**
 
-| Şey                        | Nedir                                                                                                                                    | Belgelendiği yer                             |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Kaos Modu**              | Burada açıklanan kontrol paneli sayfası + API: tek görevi birçok sağlayıcıya dağıtır (paralel veya iş birlikli).                         | Bu kılavuz                                   |
-| `auto/chaos`               | Dayanıklılık testi için hata enjeksiyonu puanlama ağırlıklarına sahip bir Auto-Combo model kimliği. Yapılandırılacak bir şey yoktur.     | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Chaos combo yapılandırması | `config.chaos.enabled` ayarıyla, isteği isteğe bağlı bir değerlendirici model içeren bir panele dağıtan kalıcı bir combo (yalnızca API). | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Şey                        | Nedir                                                                                                                                                                                  | Nerede belgelenmiştir                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**             | Burada açıklanan kontrol paneli sayfası + API: bir görevi birçok sağlayıcıya dağıtır (paralel veya iş birlikçi).                                                                       | Bu kılavuz                                   |
+| `auto/chaos`               | Auto-Combo model kimliği: paralel dağıtım, sağlayıcı başına bir model ve her biri için bir yukarı akış çağrısı. Hata enjeksiyonu değildir ([ayrıntılar](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Chaos combo yapılandırması | `config.chaos.enabled` içeren kalıcı bir combo, aynı şekilde dağıtım yapar (yalnızca API); `judgeModel` yalnızca nihai yanıtı seçer, sentez çağrısı yapılmaz.                          | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Kurulum
+### `auto/chaos`: paralel dağıtım
 
-1. **Kontrol Paneli → Kaos Modu** (`/dashboard/chaos`) sayfasını açın.
-2. Özelliği **açın** — Kaos Modu varsayılan olarak **devre dışı** gelir (`enabled: false`,
-   `src/lib/chaos/chaosConfig.ts` içinde). Devre dışıyken `POST /api/chaos/run`,
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."` yanıtını verir.
-3. Katılımcıları ve varsayılanları seçin (ayar deposu aracılığıyla her örnek için kalıcı olarak saklanır):
+`auto/chaos`, bir hata enjeksiyonu veya dayanıklılık testi ayarı **değildir**.
+`/v1/chat/completions` üzerinde `model: "auto/chaos"` isteğinde bulunulduğunda:
 
-   | Alan                | Anlamı                                                                     | Varsayılan / sınırlar                      |
-   | ------------------- | -------------------------------------------------------------------------- | ------------------------------------------ |
-   | `enabled`           | Ana anahtar                                                                | `false`                                    |
-   | `defaultMode`       | `parallel` veya `collaborative` (aşağıya bakın)                            | `parallel`                                 |
-   | `providerOverrides` | Sağlayıcı başına katılım (`providerId`, isteğe bağlı `modelId`, `enabled`) | boş = tüm etkin sağlayıcılar, en fazla 200 |
-   | `systemPrompt`      | Yerleşik Chaos sistem istemini geçersiz kılar                              | isteğe bağlı, en fazla 10 000 karakter     |
-   | `timeoutMs`         | Model çağrısı başına azami süre                                            | `120000` (5 000–600 000)                   |
-   | `maxTokens`         | Model çağrısı başına `max_tokens`                                          | `4096` (256–128 000)                       |
+1. **Sağlayıcı başına bir modelden** oluşan bir panel oluşturur: bağlı her
+   sağlayıcının aday havuzu sırasındaki ilk adayı; en fazla 5 üye
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, üst sınır 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). `chaos-mode` ağırlık
+   paketi yalnızca her üyenin `weight` değerini ayarlar; dağıtım bunu okumaz.
+2. Aynı isteği tüm panel üyelerine **paralel olarak** gönderir; dolayısıyla bir
+   istek, panel üyesi başına bir yukarı akış çağrısına mal olur
+   (`open-sse/services/autoCombo/chaosEngine.ts`, çağrı
+   `open-sse/services/combo.ts` üzerinden yapılır).
+3. Her panel üyesi ulaştığında üye başına bir durum satırı akışla gönderilir:
+   varsayılan olarak bir SSE yorumu (`: chaos <index> ok|fail <model>`) ve istekte
+   `stream_options.include_chaos_parts: true` ayarlandığında ek olarak bir
+   `omni-chaos-part` olayı (`model`, `index`, `ok`, `error`). Bunlar yanıt metni
+   içermez.
+4. Nihai OpenAI tarzı parça olarak **bir** panel yanıtı gönderir: başarılı olması
+   durumunda ilk panel üyesinin yanıtı (`auto/chaos` bunu `judgeModel` olarak
+   ayarlar), aksi takdirde son başarılı üyenin yanıtı. Diğer panel yanıtları
+   döndürülmez; dolayısıyla N çağrı için ödeme yapar ve tek bir tamamlama alırsınız.
 
-4. **Doğrudan sayfadan bir test çalıştırın** — sonuçlar paneli her sağlayıcının yanıtını,
-   durumunu ve süresini gösterir.
+## Kurmak
+
+1. Açık** Kontrol Paneli → Kaos Modu** (`/dashboard/chaos`).
+2. Çevir onu** Açık** — Kaos Modu gemileri** varsayılan olarak devre dışı** (`enabled: false`, `src/lib/chaos/chaosConfig.ts`). Devre dışıyken `POST /api/chaos/run`, `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."` yanıtını verir.
+3. Katılımcıları ve varsayılanları seçin (ayar deposu aracılığıyla örnek başına kalıcıdır):
+
+   | Alan                | Anlam                                                                      | Varsayılan / sınırlar                     |
+   | ------------------- | -------------------------------------------------------------------------- | ----------------------------------------- |
+   | `enabled`           | Ana anahtar                                                                | `false`                                   |
+   | `defaultMode`       | `parallel` veya `collaborative` (aşağıya bakın)                            | `parallel`                                |
+   | `providerOverrides` | Sağlayıcı başına katılım (`providerId`, isteğe bağlı `modelId`, `enabled`) | her aktif sağlayıcıda boş =, maksimum 200 |
+   | `systemPrompt`      | Yerleşik Kaos sistemi istemini geçersiz kıl                                | isteğe bağlı, maksimum 10 000 karakter    |
+   | `timeoutMs`         | Model çağrısı başına maksimum süre                                         | `120000` (5 000–600 000)                  |
+   | `maxTokens`         | model çağrısı başına `max_tokens`                                          | `4096` (256–128 000)                      |
+
+4. Katılan her sağlayıcıya bir** modeli** . Bir sağlayıcının modeli, Kaos Modu sayfasında etkinleştirilmiş geçersiz kılmanın `modelId` (kazanır), aksi takdirde** varsayılan model** bağlantısından. Sağlayıcı kimliği hiçbir zaman model adı olarak kullanılmaz. Her ikisine de sahip olmayan bir sağlayıcı** çağrılmadı** : diğer sağlayıcılar normal şekilde çalışırken, sonuçlarda `status: "error"` olarak _"Bu sağlayıcı için model ayarlanmadı. Kaos Modu sayfasında bunun için bir model veya bağlantıda varsayılan bir model ayarlayın."_ ve boş bir `modelId` mesajıyla görünür. Seçilen hiçbir sağlayıcının bir modeli yoksa, çalıştırma herhangi bir yukarı akış isteğinden önce _"Hiçbir sağlayıcının model kümesi yok. …"_ (her iki uç noktada HTTP 500) ile başarısız olur.
+5. Çalıştır** sayfanın kendisinden test edin** — sonuç paneli her sağlayıcının cevabını, durumunu ve süresini gösterir.
 
 ## Yürütme modları
 
@@ -54,26 +76,22 @@ Bu, bir yönlendirme stratejisi değil, çok modelli bir yürütme yüzeyidir: n
 
 ### `POST /api/chaos/run` — kontrol paneli oturumu
 
-Çerezle kimlik doğrulaması yapılır (yönetim oturumu —
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) dosyasına bakın); kontrol paneli sayfası tarafından kullanılır.
+Çerez kimlik doğrulamalı (yönetim oturumu — bkz. [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); kontrol paneli sayfası tarafından kullanılır.
 
 ```jsonc
-// gövde
+// body
 {
-  "task": "X'e yönelik yaklaşımları karşılaştır", // zorunlu
-  "providers": ["glm", "kimi"], // isteğe bağlı filtre
-  "mode": "parallel", // isteğe bağlı — defaultMode değerini geçersiz kılar
-  "systemPrompt": "…", // isteğe bağlı geçersiz kılma
-  "maxTokens": 4096, // isteğe bağlı geçersiz kılma
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
 ### `POST /api/skills/collect/chaos` — API anahtarı
 
-Harici çağıranlar için Bearer belirteci çeşididir. Anahtarın **Kaos Modu iznine**
-(`chaosModeEnabled`) sahip olması gerekir; bu izin **varsayılan olarak kapalıdır** — her anahtar için
-**Kontrol Paneli → API Yöneticisi → anahtarı düzenle → izinler → Kaos Modu** bölümünden etkinleştirin.
-Gövde yukarıdakiyle aynıdır.
+Harici arayanlar için taşıyıcı jeton çeşidi. Anahtar şunları taşımalıdır:** Kaos Modu izni** (`chaosModeEnabled`), ki bu** varsayılan olarak kapalı** — her anahtar girişi için bunu etkinleştirin** Kontrol Paneli → API Yönetici → düzenleme anahtarı → izinleri → Kaos Modu** . Yukarıdakiyle aynı vücut.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -82,7 +100,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Her iki uç nokta da aynı yapıda yanıt döndürür:
+Her iki uç nokta da aynı şekli döndürür:
 
 ```jsonc
 {
@@ -101,15 +119,13 @@ Her iki uç nokta da aynı yapıda yanıt döndürür:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // yalnızca collaborative modu
+  "summary": "…", // collaborative mode only
 }
 ```
 
 ## Sorun giderme
 
-- **`400 Chaos Mode is not enabled`** — yukarıdaki 2. adıma bakın: genel anahtar kapalıdır.
-- **API anahtarı `/api/skills/collect/chaos` üzerinde reddediliyor** — anahtarda, anahtara özel
-  `chaosModeEnabled` izni yoktur (varsayılan olarak kapalıdır; bu bir ayardır, hata değildir).
-- **Beklediğiniz bir sağlayıcı sonuçlarda yok** — Kaos Modu sayfasındaki `providerOverrides`
-  ayarını (devre dışı bırakılmış bir geçersiz kılma, sağlayıcıyı hariç tutar) ve sağlayıcı
-  bağlantısının etkin olup olmadığını kontrol edin.
+- **`400 Chaos Mode is not enabled`** yukarıdaki — adım 2: genel anahtar kapalı.
+- **API anahtarı `/api/skills/collect/chaos` reddediliyor** — anahtarında anahtar başına `chaosModeEnabled` izni yok (varsayılan olarak kapalı; bu bir hata değil, bir ayardır).
+- **Bir sağlayıcı `No model set for this provider` gösteriyor** — modelini Kaos Modu sayfasında veya bağlantısında varsayılan bir modeli ayarlar (bkz. Kurulum, adım 4).
+- **Beklediğiniz bir sağlayıcı sonuçlarda eksik** — Kaos Modu sayfasındaki `providerOverrides` (devre dışı bırakılmış bir geçersiz kılma bunu hariç tutar) ve sağlayıcı bağlantısının etkin olup olmadığını kontrol edin.

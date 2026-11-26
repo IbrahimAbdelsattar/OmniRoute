@@ -4,42 +4,70 @@
 
 ---
 
-> **Bảng điều khiển:** **Chaos Mode** (thanh bên) → `/dashboard/chaos`  
-> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (phiên bảng điều khiển) · `POST /api/skills/collect/chaos` (khóa API)  
+> **Dashboard:** **Chaos Mode** (thanh bên) → `/dashboard/chaos`  
+> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (phiên dashboard) · `POST /api/skills/collect/chaos` (khóa API)  
 > **Mã nguồn:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Chaos Mode gửi **một tác vụ đến nhiều nhà cung cấp cùng lúc** — mỗi nhà cung cấp tham gia
-đóng góp một phiên bản mô hình và bạn nhận được tất cả câu trả lời đặt cạnh nhau (hoặc theo chuỗi). Đây là
-một bề mặt thực thi đa mô hình, không phải chiến lược định tuyến: lưu lượng `/v1/chat/completions`
-thông thường của bạn không bao giờ bị ảnh hưởng.
+Chaos Mode gửi **một tác vụ đến nhiều nhà cung cấp cùng lúc** — mỗi nhà cung cấp tham gia đóng góp một phiên bản mô hình, và bạn nhận được tất cả câu trả lời cạnh nhau (hoặc theo chuỗi). Đây là một bề mặt thực thi đa mô hình, không phải chiến lược định tuyến: lưu lượng `/v1/chat/completions` thông thường của bạn không bao giờ bị ảnh hưởng bởi tính năng này.
 
-**Phân biệt — có ba tính năng khác nhau chứa "chaos" trong tên:**
+**Phân biệt — có ba thứ khác nhau được phát hành với từ "chaos" trong tên:**
 
-| Thành phần           | Nội dung                                                                                                                                    | Tài liệu                                     |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Chaos Mode**       | Trang bảng điều khiển + API được mô tả tại đây: phân phối một tác vụ đến nhiều nhà cung cấp (song song hoặc cộng tác).                      | Hướng dẫn này                                |
-| `auto/chaos`         | Một id mô hình Auto-Combo có trọng số chấm điểm chèn lỗi, dùng để kiểm thử khả năng phục hồi. Không cần cấu hình.                           | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Cấu hình combo Chaos | Một combo được lưu trữ với `config.chaos.enabled`, phân phối tác vụ đến một nhóm mô hình cùng một mô hình giám khảo tùy chọn (chỉ qua API). | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Thứ                  | Nội dung                                                                                                                                                                                    | Nơi có tài liệu                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Chaos Mode**       | Trang dashboard + API được mô tả tại đây: phân phối một tác vụ đến nhiều nhà cung cấp (song song hoặc cộng tác).                                                                            | Hướng dẫn này                                |
+| `auto/chaos`         | ID mô hình Auto-Combo: phân phối song song, một mô hình cho mỗi nhà cung cấp, mỗi mô hình thực hiện một lệnh gọi ngược dòng. Không phải chèn lỗi ([chi tiết](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Cấu hình combo Chaos | Một combo được lưu bền vững với `config.chaos.enabled` sẽ phân phối theo cùng cách (chỉ qua API); `judgeModel` chỉ chọn câu trả lời cuối cùng, không có lệnh gọi tổng hợp.                  | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`: phân phối song song
+
+`auto/chaos` **không** phải là tùy chọn chèn lỗi hoặc kiểm thử khả năng phục hồi. Khi yêu cầu
+`model: "auto/chaos"` trên `/v1/chat/completions`:
+
+1. Tạo một nhóm gồm **một mô hình cho mỗi nhà cung cấp**: ứng viên đầu tiên của từng
+   nhà cung cấp đã kết nối, theo thứ tự nhóm ứng viên, tối đa 5 thành viên
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, giới hạn tối đa là 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Gói trọng số `chaos-mode`
+   chỉ đặt `weight` cho từng thành viên; quá trình phân phối không đọc giá trị này.
+2. Gửi cùng một yêu cầu đến mọi thành viên trong nhóm **theo cách song song**, vì vậy một yêu cầu
+   tiêu tốn một lệnh gọi ngược dòng cho mỗi thành viên trong nhóm
+   (`open-sse/services/autoCombo/chaosEngine.ts`, được điều phối từ
+   `open-sse/services/combo.ts`).
+3. Truyền một dòng trạng thái cho mỗi thành viên trong nhóm khi có kết quả: theo mặc định là một chú thích SSE
+   (`: chaos <index> ok|fail <model>`), cùng với một sự kiện `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) khi yêu cầu đặt
+   `stream_options.include_chaos_parts: true`. Các thông tin này không chứa văn bản câu trả lời.
+4. Gửi **một** câu trả lời của nhóm dưới dạng đoạn dữ liệu cuối cùng theo kiểu OpenAI: câu trả lời của thành viên
+   đầu tiên trong nhóm (`auto/chaos` đặt thành viên này làm `judgeModel`) khi thành công; nếu không,
+   câu trả lời của thành viên thành công cuối cùng sẽ được gửi. Các câu trả lời khác trong nhóm không được trả về, vì vậy
+   bạn trả phí cho N lệnh gọi nhưng chỉ nhận được một kết quả hoàn thành.
 
 ## Thiết lập
 
-1. Mở **Bảng điều khiển → Chaos Mode** (`/dashboard/chaos`).
-2. **Bật** tính năng này — Chaos Mode được cung cấp ở trạng thái **tắt theo mặc định** (`enabled: false` trong
+1. Mở **Bảng điều khiển → Chế độ Chaos** (`/dashboard/chaos`).
+2. Bật **Chế độ Chaos** — Chế độ Chaos được **tắt theo mặc định** (`enabled: false` trong
    `src/lib/chaos/chaosConfig.ts`). Khi bị tắt, `POST /api/chaos/run` trả về
    `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Chọn các thành phần tham gia và giá trị mặc định (được lưu riêng cho từng phiên bản thông qua kho cài đặt):
+3. Chọn các thành phần tham gia và giá trị mặc định (được lưu theo từng phiên bản thông qua kho cài đặt):
 
-   | Trường              | Ý nghĩa                                                                                  | Mặc định / giới hạn                                 |
-   | ------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------- |
-   | `enabled`           | Công tắc chính                                                                           | `false`                                             |
-   | `defaultMode`       | `parallel` hoặc `collaborative` (xem bên dưới)                                           | `parallel`                                          |
-   | `providerOverrides` | Trạng thái tham gia theo từng nhà cung cấp (`providerId`, `modelId` tùy chọn, `enabled`) | trống = mọi nhà cung cấp đang hoạt động, tối đa 200 |
-   | `systemPrompt`      | Giá trị ghi đè cho lời nhắc hệ thống Chaos tích hợp sẵn                                  | tùy chọn, tối đa 10 000 ký tự                       |
-   | `timeoutMs`         | Thời gian tối đa cho mỗi lần gọi mô hình                                                 | `120000` (5 000–600 000)                            |
-   | `maxTokens`         | `max_tokens` cho mỗi lần gọi mô hình                                                     | `4096` (256–128 000)                                |
+   | Trường              | Ý nghĩa                                                                          | Mặc định / giới hạn                            |
+   | ------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------- |
+   | `enabled`           | Công tắc chính                                                                   | `false`                                        |
+   | `defaultMode`       | `parallel` hoặc `collaborative` (xem bên dưới)                                   | `parallel`                                     |
+   | `providerOverrides` | Mức độ tham gia theo từng provider (`providerId`, tùy chọn `modelId`, `enabled`) | rỗng = mọi provider đang hoạt động, tối đa 200 |
+   | `systemPrompt`      | Ghi đè system prompt Chaos tích hợp sẵn                                          | tùy chọn, tối đa 10 000 ký tự                  |
+   | `timeoutMs`         | Thời gian tối đa cho mỗi lần gọi model                                           | `120000` (5 000–600 000)                       |
+   | `maxTokens`         | `max_tokens` cho mỗi lần gọi model                                               | `4096` (256–128 000)                           |
 
-4. Chạy **kiểm thử ngay trên trang** — bảng kết quả hiển thị câu trả lời,
-   trạng thái và thời lượng của từng nhà cung cấp.
+4. Cung cấp **model** cho mọi provider tham gia. Model của một provider là `modelId` của override
+   đang bật trên trang Chế độ Chaos (được ưu tiên), nếu không thì là **model mặc định** của kết nối
+   tương ứng. ID của provider không bao giờ được dùng làm tên model. Provider không có cả hai giá trị
+   này sẽ **không được gọi**: provider đó xuất hiện trong kết quả với `status: "error"` cùng thông báo
+   _"No model set for this provider. Set a model for it on the Chaos Mode page or a default model on the connection."_
+   và `modelId` rỗng, trong khi các provider khác vẫn chạy bình thường. Nếu không có provider nào được
+   chọn có model, tiến trình chạy sẽ thất bại trước mọi yêu cầu gửi lên upstream với thông báo
+   _"No provider has a model set. …"_ (HTTP 500 trên cả hai endpoint).
+5. Chạy một **bài kiểm tra ngay trên trang** — bảng kết quả hiển thị câu trả lời, trạng thái và thời lượng
+   của từng provider.
 
 ## Chế độ thực thi
 
@@ -51,33 +79,33 @@ thông thường của bạn không bao giờ bị ảnh hưởng.
 
 ## API
 
-### `POST /api/chaos/run` — phiên bảng điều khiển
+### `POST /api/chaos/run` — phiên dashboard
 
-Được xác thực bằng cookie (phiên quản lý — xem
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); được trang bảng điều khiển sử dụng.
+Xác thực bằng cookie (phiên quản lý — xem
+[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); được trang dashboard sử dụng.
 
 ```jsonc
-// nội dung yêu cầu
+// nội dung
 {
-  "task": "Compare approaches to X", // bắt buộc
+  "task": "So sánh các phương pháp tiếp cận X", // bắt buộc
   "providers": ["glm", "kimi"], // bộ lọc tùy chọn
   "mode": "parallel", // tùy chọn — ghi đè defaultMode
-  "systemPrompt": "…", // giá trị ghi đè tùy chọn
-  "maxTokens": 4096, // giá trị ghi đè tùy chọn
+  "systemPrompt": "…", // tùy chọn ghi đè
+  "maxTokens": 4096, // tùy chọn ghi đè
 }
 ```
 
 ### `POST /api/skills/collect/chaos` — khóa API
 
-Biến thể sử dụng bearer token dành cho trình gọi bên ngoài. Khóa phải có **quyền Chaos Mode**
-(`chaosModeEnabled`), vốn **bị tắt theo mặc định** — bật quyền này cho từng khóa tại
-**Bảng điều khiển → Trình quản lý API → chỉnh sửa khóa → quyền → Chaos Mode**. Nội dung yêu cầu giống như trên.
+Biến thể sử dụng mã thông báo Bearer dành cho các bên gọi bên ngoài. Khóa phải có **quyền Chaos Mode**
+(`chaosModeEnabled`), **tắt theo mặc định** — hãy bật quyền này cho từng khóa tại
+**Dashboard → API Manager → edit key → permissions → Chaos Mode**. Nội dung giống như trên.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -H "Authorization: Bearer $OMNIROUTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"task":"Compare approaches to X","mode":"parallel"}'
+  -d '{"task":"So sánh các phương pháp tiếp cận X","mode":"parallel"}'
 ```
 
 Cả hai endpoint đều trả về cùng một cấu trúc:
@@ -105,9 +133,7 @@ Cả hai endpoint đều trả về cùng một cấu trúc:
 
 ## Khắc phục sự cố
 
-- **`400 Chaos Mode is not enabled`** — xem bước 2 ở trên: công tắc toàn cục đang tắt.
-- **Khóa API bị từ chối trên `/api/skills/collect/chaos`** — khóa thiếu quyền
-  `chaosModeEnabled` dành riêng cho từng khóa (bị tắt theo mặc định; đây là một cài đặt, không phải lỗi).
-- **Một nhà cung cấp mà bạn mong đợi không xuất hiện trong kết quả** — hãy kiểm tra `providerOverrides` trên
-  trang Chaos Mode (một giá trị ghi đè bị tắt sẽ loại trừ nhà cung cấp đó) và kiểm tra xem kết nối với nhà cung cấp có
-  đang hoạt động hay không.
+- **`400 Chaos Mode is not enabled`** — bước 2 ở trên: công tắc toàn cục đang tắt.
+- **API key bị từ chối trên `/api/skills/collect/chaos`** — key thiếu quyền `chaosModeEnabled` theo từng key (mặc định đang tắt; đây là một cài đặt, không phải lỗi).
+- **Một nhà cung cấp hiển thị `No model set for this provider`** — đặt model của nhà cung cấp đó trên trang Chaos Mode hoặc đặt model mặc định trên connection của nhà cung cấp (xem Setup, bước 4).
+- **Một nhà cung cấp mà bạn mong đợi không xuất hiện trong kết quả** — kiểm tra `providerOverrides` trên trang Chaos Mode (override bị tắt sẽ loại trừ nhà cung cấp đó) và kiểm tra connection của nhà cung cấp có đang hoạt động hay không.

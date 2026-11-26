@@ -4,42 +4,63 @@
 
 ---
 
-> **Pẹpẹ Ìṣàkóso:** **Ipo Chaos** (ọ̀pá ẹ̀gbẹ́) → `/dashboard/chaos`  
-> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (ìgbà ìṣiṣẹ́ pẹpẹ ìṣàkóso) · `POST /api/skills/collect/chaos` (kọ́kọ́rọ́ API)  
+> **Pátákó ìṣàkóso:** **Chaos Mode** (àkójọ-ẹ̀gbẹ́) → `/dashboard/chaos`  
+> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (àkókò pátákó ìṣàkóso) · `POST /api/skills/collect/chaos` (kọ́kọ́rọ́ API)  
 > **Orísun:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Ipo Chaos máa ń fi **iṣẹ́ kan ránṣẹ́ sí ọ̀pọ̀ olùpèsè lẹ́ẹ̀kan náà** — olùpèsè kọ̀ọ̀kan tó kópa
-máa ń ṣàfikún àpẹẹrẹ model kan, o sì máa rí gbogbo àwọn ìdáhùn lẹ́gbẹ̀ẹ́ ara wọn (tàbí ní ẹ̀wọ̀n). Ó jẹ́
-ojú-ọ̀nà ìṣiṣẹ́ model-púpọ̀, kì í ṣe ọgbọ́n ìtọ́sọ́nà: kò ní ipa lórí ìrìnàjò `/v1/chat/completions`
-deede rẹ rárá.
+Chaos Mode ń fi **iṣẹ́ kan ṣoṣo ránṣẹ́ sí ọ̀pọ̀ olùpèsè lẹ́ẹ̀kan náà** — olùpèsè kọ̀ọ̀kan tó ń kópa
+ń ṣàfikún ẹ̀dà awoṣe kan, ìwọ yóò sì gba gbogbo àwọn ìdáhùn náà lẹ́gbẹ̀ẹ́ ara wọn (tàbí ní ọ̀wọ̀ọ̀wọ́). Ó jẹ́
+ojú-iṣẹ́ ìṣiṣẹ́ ọ̀pọ̀-awoṣe, kì í ṣe ọgbọ́n ìdarí ipa-ọ̀nà: kò ní ipa kankan lórí ìrìnnà `/v1/chat/completions`
+deédéé rẹ.
 
-**Ìyàtọ̀-kedere — ohun mẹ́ta ọ̀tọ̀ọ̀tọ̀ ni a pèsè pẹ̀lú "chaos" nínú orúkọ wọn:**
+**Ìyàtọ̀sí — ohun mẹ́ta ọ̀tọ̀ọ̀tọ̀ ló ní "chaos" nínú orúkọ wọn:**
 
-| Nǹkan             | Ohun tí ó jẹ́                                                                                                                | Ibi tí a ti ṣàkọsílẹ̀ rẹ̀                      |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Ipo Chaos**     | Ojú-ìwé pẹpẹ ìṣàkóso + API tí a ṣàlàyé níbí: pín iṣẹ́ kan sí ọ̀pọ̀ olùpèsè (ní ìṣọ̀kan tàbí ní ìfọwọ́sowọ́pọ̀).                    | Ìtọ́sọ́nà yìí                                  |
-| `auto/chaos`      | Id model Auto-Combo kan pẹ̀lú àwọn ìwọ̀n ìṣírò ìfí-àṣìṣe-sínú-ètò, fún ìdánwò agbára ìfaradà. Kò sí ohun tí a nílò láti ṣètò. | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Àtòpọ̀ ìṣètò Chaos | Àtòpọ̀ tí a tọ́jú pẹ̀lú `config.chaos.enabled` máa ń pín sí panẹli kan pẹ̀lú model adájọ́ àṣàyàn (API-nìkan).                    | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Nǹkan             | Ohun tí ó jẹ́                                                                                                                                                                   | Ibi tí a ti ṣàkọsílẹ̀ rẹ̀                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Chaos Mode**    | Ojú-ìwé pátákó ìṣàkóso + API tí a ṣàlàyé níbí: tan iṣẹ́ kan ká sí ọ̀pọ̀ olùpèsè (ní ìfarakanra tàbí ní ìfọwọ́sowọ́pọ̀).                                                              | Ìtọ́sọ́nà yìí                                  |
+| `auto/chaos`      | ID awoṣe Auto-Combo: títan ká ní ìfarakanra, awoṣe kan fún olùpèsè kọ̀ọ̀kan, ìpè kan sí iṣẹ́ òkè fún ọ̀kọ̀ọ̀kan. Kì í ṣe fífi àṣìṣe sínú eto ([àlàyé](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Àtòpọ̀ ìṣètò Chaos | Àtòpọ̀ tí a fi pamọ́ pẹ̀lú `config.chaos.enabled` ń tan iṣẹ́ ká ní ọ̀nà kan náà (API-nìkan); `judgeModel` kàn ń yan ìdáhùn ìkẹyìn, kò sí ìpè àkójọpọ̀.                               | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Ìṣètò
+### `auto/chaos`: títan ká ní ìfarakanra
 
-1. Ṣí **Pẹpẹ Ìṣàkóso → Ipo Chaos** (`/dashboard/chaos`).
-2. Tan-an — Ipo Chaos wà ní **pípà nípa àìyípadà** (`enabled: false` nínú
-   `src/lib/chaos/chaosConfig.ts`). Nígbà tí ó wà ní pípà, `POST /api/chaos/run` máa dáhùn
-   `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
-3. Yan àwọn olùkópa àti àwọn àìyípadà (a tọ́jú wọn fún instance kọ̀ọ̀kan nípasẹ̀ ilé ìtọ́jú àwọn ìṣètò):
+`auto/chaos` **kì í ṣe** àmúlò fífi àṣìṣe sínú eto tàbí ti ìdánwò agbára ìfaradà. Nígbà tí a bá béèrè
+`model: "auto/chaos"` lórí `/v1/chat/completions`:
 
-   | Ààyè                | Ìtumọ̀                                                                | Àìyípadà / àwọn ààlà                         |
-   | ------------------- | -------------------------------------------------------------------- | -------------------------------------------- |
-   | `enabled`           | Yíyípadà àgbà                                                        | `false`                                      |
-   | `defaultMode`       | `parallel` tàbí `collaborative` (wo ìsàlẹ̀)                           | `parallel`                                   |
-   | `providerOverrides` | Ìkópa fún olùpèsè kọ̀ọ̀kan (`providerId`, `modelId` àṣàyàn, `enabled`) | òfìfo = gbogbo olùpèsè tó ń ṣiṣẹ́, ó pọ̀jù 200 |
-   | `systemPrompt`      | Ìkọjá-ìṣètò fún ìtọ́sọ́nà ètò Chaos inú-ẹ̀rọ                            | àṣàyàn, ó pọ̀jù àmì-ọ̀rọ̀ 10 000                |
-   | `timeoutMs`         | Àkókò tó pọ̀jù fún ìpè model kọ̀ọ̀kan                                   | `120000` (5 000–600 000)                     |
-   | `maxTokens`         | `max_tokens` fún ìpè model kọ̀ọ̀kan                                    | `4096` (256–128 000)                         |
+1. Ó kọ́ ẹgbẹ́ kan ti **awoṣe kan fún olùpèsè kọ̀ọ̀kan**: olùdíje àkọ́kọ́ láti ọ̀dọ̀
+   olùpèsè kọ̀ọ̀kan tó sopọ̀, ní ìtẹ̀lé àkójọpọ̀ àwọn olùdíje, tó fi dé ọmọ ẹgbẹ́ 5
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, tí a dá dúró sí 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Àkójọpọ̀ ìwọ̀n `chaos-mode`
+   kàn ń ṣètò `weight` ọmọ ẹgbẹ́ kọ̀ọ̀kan; títan ká náà kò ka á.
+2. Ó fi ìbéèrè kan náà ránṣẹ́ sí gbogbo ọmọ ẹgbẹ́ **ní ìfarakanra**, nítorí náà ìbéèrè kan
+   ń ná ìpè iṣẹ́ òkè kan fún ọmọ ẹgbẹ́ kọ̀ọ̀kan
+   (`open-sse/services/autoCombo/chaosEngine.ts`, tí a fi ránṣẹ́ láti
+   `open-sse/services/combo.ts`).
+3. Ó ń ṣàn ìlà ipò kan fún ọmọ ẹgbẹ́ kọ̀ọ̀kan bí ó ṣe ń dé: àlàyé SSE kan
+   (`: chaos <index> ok|fail <model>`) ní àìyípadà, pẹ̀lú ìṣẹ̀lẹ̀ `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) nígbà tí ìbéèrè bá ṣètò
+   `stream_options.include_chaos_parts: true`. Ìwọ̀nyí kò ní ọ̀rọ̀ ìdáhùn kankan.
+4. Ó fi **ìdáhùn kan ṣoṣo** láti inú ẹgbẹ́ náà ránṣẹ́ gẹ́gẹ́ bí àjákù ìkẹyìn ní àṣà OpenAI: ti ọmọ ẹgbẹ́
+   àkọ́kọ́ (`auto/chaos` ń ṣètò rẹ̀ gẹ́gẹ́ bí `judgeModel`) nígbà tí ó bá ṣàṣeyọrí, bí bẹ́ẹ̀ kọ́
+   ti ọmọ ẹgbẹ́ tó ṣàṣeyọrí gbẹ̀yìn. A kò dá àwọn ìdáhùn ọmọ ẹgbẹ́ yòókù padà, nítorí náà
+   o sanwó fún ìpè N, o sì gba ìparí kan ṣoṣo.
 
-4. Ṣe **ìdánwò láti ojú-ìwé náà fúnra rẹ̀** — panẹli àbájáde máa ń fi ìdáhùn olùpèsè kọ̀ọ̀kan,
-   ipò àti iye àkókò hàn.
+## Ṣeto
+
+1. Ṣii** Dasibodu → Ipo Idarudapọ** (`/dashboard/chaos`).
+2. Yipada** lori** — Chaos Mode ọkọ** alaabo nipasẹ aiyipada** (`enabled: false` ninu `src/lib/chaos/chaosConfig.ts`). Lakoko alaabo, `POST /api/chaos/run` dahun `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Mu awọn olukopa ati awọn aṣiṣe (ti o duro fun apẹẹrẹ nipasẹ ile itaja eto):
+
+   | Aaye                | Itumo                                                       | Aiyipada / ifilelẹ lọ                       |
+   | ------------------- | ----------------------------------------------------------- | ------------------------------------------- |
+   | `enabled`           | Titunto si yipada                                           | `false`                                     |
+   | `defaultMode`       | `parallel` tabi `collaborative` (wo isalẹ)                  | `parallel`                                  |
+   | `providerOverrides` | Ikopa fun Olupese (`providerId`, `modelId` iyan, `enabled`) | = ofo gbogbo olupese ti nṣiṣe lọwọ, max 200 |
+   | `systemPrompt`      | Yipadanu fun itọsi eto Idarudapọ ti a ṣe sinu rẹ            | iyan, max 10 000 chars                      |
+   | `timeoutMs`         | Akoko to pọju fun ipe awoṣe                                 | `120000` (5 000–600 000)                    |
+   | `maxTokens`         | `max_tokens` fun ipe awoṣe                                  | `4096` (256–128 000)                        |
+
+4. Fun gbogbo olupese ti o kopa a** awoṣe** . Awoṣe olupese ni `modelId` ti o ti mu ṣiṣẹ danu lori oju-iwe Ipo Idarudapọ (o bori), bibẹẹkọ** aiyipada awoṣe** ti asopọ rẹ. A ko lo id olupese kan rara bi orukọ awoṣe. A olupese pẹlu bẹni ni** ko pe** : o fihan ni awọn abajade bi `status: "error"` pẹlu ifiranṣẹ _"Ko si awoṣe ti a ṣeto fun olupese yii. Ṣeto awoṣe fun u lori oju-iwe Ipo Chaos tabi awoṣe aiyipada lori asopọ. "_ ati `modelId` ṣofo, lakoko ti awọn olupese miiran nṣiṣẹ ni deede. Ti ko ba si olupese ti a yan ti o ni awoṣe kan, ṣiṣe naa kuna ṣaaju eyikeyi ibeere oke pẹlu _"Ko si olupese ti o ni eto awoṣe kan…”_ (HTTP 500 lori awọn aaye ipari mejeeji).
+5. Ṣiṣe a** idanwo lati oju-iwe funrararẹ** — nronu abajade fihan idahun olupese kọọkan, ipo ati iye akoko.
 
 ## Àwọn ipo ìṣiṣẹ́
 
@@ -51,27 +72,24 @@ deede rẹ rárá.
 
 ## API
 
-### `POST /api/chaos/run` — ìgbà ìṣiṣẹ́ pẹpẹ ìṣàkóso
+### `POST /api/chaos/run` — Dasibodu igba
 
-Ìjẹ́rìísí nípasẹ̀ cookie (ìgbà ìṣiṣẹ́ ìṣàkóso — wo
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); ojú-ìwé pẹpẹ ìṣàkóso ló máa ń lò ó.
+Kukisi-ifọwọsi (igba iṣakoso — wo [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); lo nipasẹ awọn Dasibodu iwe.
 
 ```jsonc
-// ara ìbéèrè
+// body
 {
-  "task": "Compare approaches to X", // ó pọn dandan
-  "providers": ["glm", "kimi"], // àlẹ̀ àṣàyàn
-  "mode": "parallel", // àṣàyàn — kọjá defaultMode
-  "systemPrompt": "…", // ìkọjá-ìṣètò àṣàyàn
-  "maxTokens": 4096, // ìkọjá-ìṣètò àṣàyàn
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — kọ́kọ́rọ́ API
+### bọtini `POST /api/skills/collect/chaos` — API
 
-Ẹ̀yà bearer-token fún àwọn olùpè òde. Kọ́kọ́rọ́ náà gbọ́dọ̀ ní **àṣẹ Ipo Chaos**
-(`chaosModeEnabled`), èyí tí ó wà ní **pípà nípa àìyípadà** — tan-an fún kọ́kọ́rọ́ kọ̀ọ̀kan ní
-**Pẹpẹ Ìṣàkóso → Olùṣàkóso API → ṣàtúnṣe kọ́kọ́rọ́ → àwọn àṣẹ → Ipo Chaos**. Ara ìbéèrè kan náà bí èyí tó wà lókè.
+Iyatọ-àmi agbateru fun awọn olupe ita. Awọn bọtini gbọdọ gbe awọn** Igbanilaaye Ipo Idarudapọ** (`chaosModeEnabled`), ti o jẹ** pipa nipa aiyipada** — jeki o fun bọtini ni** Dashboard → API Manager → satunkọ bọtini → awọn igbanilaaye → Ipo Idarudapọ** . Ara kanna bi loke.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -80,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Àwọn endpoint méjèèjì máa ń dá irú ìrísí kan náà padà:
+Awọn aaye ipari mejeeji pada apẹrẹ kanna:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // fún ipo collaborative nìkan
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## Yíyanjú àwọn ìṣòro
+## Laasigbotitusita
 
-- **`400 Chaos Mode is not enabled`** — ìgbésẹ̀ 2 lókè: yíyípadà àgbáyé wà ní pípà.
-- **A kọ kọ́kọ́rọ́ API sílẹ̀ lórí `/api/skills/collect/chaos`** — kọ́kọ́rọ́ náà kò ní àṣẹ
-  `chaosModeEnabled` fún kọ́kọ́rọ́ kọ̀ọ̀kan (ó wà ní pípà nípa àìyípadà; ìṣètò ni èyí, kì í ṣe àṣìṣe).
-- **Olùpèsè kan tí o retí kò sí nínú àwọn àbájáde** — ṣàyẹ̀wò `providerOverrides` lórí ojú-ìwé
-  Ipo Chaos (ìkọjá-ìṣètò tí a pa máa yọ ọ́ kúrò) àti bóyá àsopọ̀ olùpèsè náà
-  ń ṣiṣẹ́.
+- **`400 Chaos Mode is not enabled`** — igbese 2 loke: agbaye yipada ni pipa.
+- **bọtini API olubwon kọ on `/api/skills/collect/chaos`** — bọtini ko ni igbanilaaye `chaosModeEnabled` -kọọkan (pa nipasẹ aiyipada; eyi jẹ eto, kii ṣe aṣiṣe).
+- **Olupese kan fihan `No model set for this provider`** — ṣeto awoṣe rẹ lori oju-iwe Ipo Idarudapọ tabi awoṣe aiyipada lori asopọ rẹ (wo Eto, igbesẹ 4).
+- **Olupese ti o nireti sonu lati awọn abajade** — ṣayẹwo `providerOverrides` lori oju-iwe Ipo Idarudapọ (aṣiṣe alaabo kan yọkuro rẹ) ati boya asopọ olupese n ṣiṣẹ.

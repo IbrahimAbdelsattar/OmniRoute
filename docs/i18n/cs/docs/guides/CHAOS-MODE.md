@@ -4,42 +4,63 @@
 
 ---
 
-> **Řídicí panel:** **Režim Chaos** (postranní panel) → `/dashboard/chaos`  
-> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (relace řídicího panelu) · `POST /api/skills/collect/chaos` (klíč API)  
+> **Dashboard:** **Režim chaosu** (postranní panel) → `/dashboard/chaos`  
+> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (relace dashboardu) · `POST /api/skills/collect/chaos` (klíč API)  
 > **Zdroj:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Režim Chaos odesílá **jeden úkol několika poskytovatelům současně** — každý zapojený poskytovatel
-přispívá jednou instancí modelu a všechny odpovědi obdržíte vedle sebe (nebo zřetězené). Jde o
+Režim chaosu odesílá **jeden úkol několika poskytovatelům současně** — každý zúčastněný poskytovatel
+přispívá jednou instancí modelu a všechny odpovědi získáte vedle sebe (nebo zřetězené). Jde o
 rozhraní pro spouštění více modelů, nikoli o strategii směrování: váš běžný provoz
-`/v1/chat/completions` jím nikdy není ovlivněn.
+`/v1/chat/completions` tím není nikdy ovlivněn.
 
-**Upřesnění — s názvem „chaos“ se dodávají tři různé věci:**
+**Upřesnění — pod názvem „chaos“ jsou dodávány tři různé věci:**
 
-| Věc                         | Co to je                                                                                                                            | Kde je zdokumentována                        |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **Režim Chaos**             | Zde popsaná stránka řídicího panelu a API: rozeslání jednoho úkolu mnoha poskytovatelům (paralelně nebo ve spolupráci).             | Tato příručka                                |
-| `auto/chaos`                | ID modelu Auto-Combo s vahami hodnocení pro vkládání chyb, určené k testování odolnosti. Není třeba nic konfigurovat.               | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Konfigurace kombinace Chaos | Trvale uložená kombinace s `config.chaos.enabled`, která rozešle požadavek panelu s volitelným hodnoticím modelem (pouze přes API). | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Položka                      | Co to je                                                                                                                                                                                   | Kde je dokumentována                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Režim chaosu**             | Zde popsaná stránka dashboardu + API: rozešle jeden úkol mnoha poskytovatelům (paralelně nebo ve spolupráci).                                                                              | Tato příručka                                |
+| `auto/chaos`                 | ID modelu Auto-Combo: paralelní rozeslání, jeden model na poskytovatele, po jednom upstreamovém volání. Nejde o vkládání poruch ([podrobnosti](#autochaos-parallel-fan-out)).              | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Konfigurace kombinace chaosu | Trvale uložená kombinace s `config.chaos.enabled` rozesílá požadavek stejným způsobem (pouze přes API); `judgeModel` pouze vybírá konečnou odpověď, žádné volání pro syntézu se neprovádí. | `open-sse/services/autoCombo/chaosEngine.ts` |
+
+### `auto/chaos`: paralelní rozeslání
+
+`auto/chaos` **není** přepínač pro vkládání poruch ani testování odolnosti. Požadavek s
+`model: "auto/chaos"` na `/v1/chat/completions`:
+
+1. Sestaví panel s **jedním modelem od každého poskytovatele**: prvním kandidátem každého
+   připojeného poskytovatele v pořadí fondu kandidátů, maximálně 5 členů
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, omezeno na 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Sada vah `chaos-mode`
+   pouze nastavuje `weight` každého člena; rozesílání tuto hodnotu nečte.
+2. Odešle stejný požadavek všem členům panelu **paralelně**, takže jeden požadavek
+   stojí jedno upstreamové volání na každého člena panelu
+   (`open-sse/services/autoCombo/chaosEngine.ts`, odesláno z
+   `open-sse/services/combo.ts`).
+3. Při doručení jednotlivých výsledků streamuje jeden stavový řádek na člena panelu: ve výchozím nastavení komentář SSE
+   (`: chaos <index> ok|fail <model>`) a navíc událost `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`), pokud požadavek nastaví
+   `stream_options.include_chaos_parts: true`. Tyto zprávy neobsahují text odpovědi.
+4. Odešle **jednu** odpověď panelu jako konečný blok ve stylu OpenAI: odpověď prvního člena
+   panelu (`auto/chaos` jej nastaví jako `judgeModel`), pokud uspěje, jinak
+   odpověď posledního úspěšného člena. Ostatní odpovědi panelu se nevracejí, takže
+   zaplatíte za N volání a obdržíte jedno dokončení.
 
 ## Nastavení
 
-1. Otevřete **Řídicí panel → Režim Chaos** (`/dashboard/chaos`).
-2. **Zapněte jej** — Režim Chaos se dodává **ve výchozím nastavení vypnutý** (`enabled: false` v
-   `src/lib/chaos/chaosConfig.ts`). Dokud je vypnutý, `POST /api/chaos/run` odpovídá
-   `400 — „Režim Chaos není povolen. Povolte jej v části Řídicí panel → Režim Chaos.“`.
-3. Vyberte účastníky a výchozí hodnoty (ukládají se pro každou instanci prostřednictvím úložiště nastavení):
+1. OTEVŘENO** Dashboard → Chaos Mode** (`/dashboard/chaos`).
+2. Otočte to** na** — lodě v režimu chaosu** ve výchozím nastavení zakázáno** (`enabled: false` v `src/lib/chaos/chaosConfig.ts`). Když je `POST /api/chaos/run` zakázáno, odpovídá `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Vyberte účastníky a výchozí hodnoty (přetrvávají pro každou instanci prostřednictvím úložiště nastavení):
 
-   | Pole                | Význam                                                                          | Výchozí hodnota / omezení                      |
+   | Pole                | Význam                                                                          | Výchozí / limity                               |
    | ------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------- |
-   | `enabled`           | Hlavní přepínač                                                                 | `false`                                        |
+   | `enabled`           | Hlavní vypínač                                                                  | `false`                                        |
    | `defaultMode`       | `parallel` nebo `collaborative` (viz níže)                                      | `parallel`                                     |
-   | `providerOverrides` | Účast jednotlivých poskytovatelů (`providerId`, volitelné `modelId`, `enabled`) | prázdné = každý aktivní poskytovatel, max. 200 |
-   | `systemPrompt`      | Přepsání vestavěné systémové instrukce režimu Chaos                             | volitelné, max. 10 000 znaků                   |
-   | `timeoutMs`         | Maximální doba jednoho volání modelu                                            | `120000` (5 000–600 000)                       |
-   | `maxTokens`         | `max_tokens` pro jedno volání modelu                                            | `4096` (256–128 000)                           |
+   | `providerOverrides` | Účast jednotlivých poskytovatelů (`providerId`, volitelné `modelId`, `enabled`) | prázdný = každý aktivní poskytovatel, max. 200 |
+   | `systemPrompt`      | Přepsání výzvy vestavěného systému Chaos                                        | volitelné, max. 10 000 znaků                   |
+   | `timeoutMs`         | Maximální doba na volání modelu                                                 | `120000` (5 000–600 000)                       |
+   | `maxTokens`         | `max_tokens` za volání modelu                                                   | `4096` (256–128 000)                           |
 
-4. Spusťte **test přímo ze stránky** — panel výsledků zobrazí odpověď, stav a dobu trvání
-   každého poskytovatele.
+4. Dejte každému zúčastněnému poskytovateli a** model** . Model poskytovatele je `modelId` jeho povoleného přepsání na stránce Chaos Mode (vyhrává), jinak** výchozí model** jeho spojení. ID poskytovatele se nikdy nepoužívá jako název modelu. Poskytovatel s ani jedním není** nevolal** : ve výsledcích se zobrazí jako `status: "error"` se zprávou _"Pro tohoto poskytovatele není nastaven žádný model. Nastavte pro něj model na stránce Režim chaosu nebo výchozí model na připojení."_ a prázdné `modelId`, zatímco ostatní poskytovatelé běží normálně. Pokud žádný vybraný poskytovatel nemá model, běh se nezdaří před jakýmkoli upstream požadavkem s _"Žádný poskytovatel nemá nastaven model. …"_ (HTTP 500 na obou koncových bodech).
+5. Spustit a** test ze samotné stránky** — panel výsledků zobrazuje odpověď každého poskytovatele, stav a dobu trvání.
 
 ## Režimy spuštění
 
@@ -51,27 +72,24 @@ rozhraní pro spouštění více modelů, nikoli o strategii směrování: váš
 
 ## API
 
-### `POST /api/chaos/run` — relace řídicího panelu
+### relace řídicího panelu `POST /api/chaos/run` —
 
-Ověřováno pomocí souboru cookie (relace pro správu — viz
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); používá se na stránce řídicího panelu.
+Ověřeno souborem cookie (relace správy — viz [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); používá stránka řídicího panelu.
 
 ```jsonc
-// tělo
+// body
 {
-  "task": "Compare approaches to X", // povinné
-  "providers": ["glm", "kimi"], // volitelný filtr
-  "mode": "parallel", // volitelné — přepíše defaultMode
-  "systemPrompt": "…", // volitelné přepsání
-  "maxTokens": 4096, // volitelné přepsání
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — klíč API
+### klíč `POST /api/skills/collect/chaos` — API
 
-Varianta s nosným tokenem pro externí volající. Klíč musí mít **oprávnění Režimu Chaos**
-(`chaosModeEnabled`), které je **ve výchozím nastavení vypnuté** — povolte jej pro jednotlivé klíče v části
-**Řídicí panel → Správce API → upravit klíč → oprávnění → Režim Chaos**. Tělo je stejné jako výše.
+Varianta nosiče-tokenu pro externí volající. Klíč musí nést** Povolení režimu Chaos** (`chaosModeEnabled`), což je** ve výchozím nastavení vypnuto** — to povolte na klíč** Dashboard → API Manager → upravit klíč → oprávnění → Chaos Mode** . Stejné tělo jako výše.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
@@ -80,7 +98,7 @@ curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Oba koncové body vracejí stejnou strukturu:
+Oba koncové body vrátí stejný tvar:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Oba koncové body vracejí stejnou strukturu:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // pouze režim spolupráce
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## Řešení problémů
+## Odstraňování problémů
 
-- **`400 Režim Chaos není povolen`** — viz krok 2 výše: globální přepínač je vypnutý.
-- **Klíč API je na `/api/skills/collect/chaos` odmítnut** — klíči chybí oprávnění
-  `chaosModeEnabled` pro daný klíč (ve výchozím nastavení je vypnuté; jde o nastavení, nikoli o chybu).
-- **Ve výsledcích chybí očekávaný poskytovatel** — zkontrolujte `providerOverrides` na stránce
-  Režimu Chaos (vypnuté přepsání jej vyloučí) a ověřte, zda je připojení k poskytovateli
-  aktivní.
+- **`400 Chaos Mode is not enabled`** — krok 2 výše: globální přepínač je vypnutý.
+- **Klíč API je na `/api/skills/collect/chaos` odmítnut** — klíč postrádá oprávnění `chaosModeEnabled` pro každý klíč (ve výchozím nastavení vypnuto; jedná se o nastavení, nikoli o chybu).
+- **Poskytovatel ukazuje `No model set for this provider`** — nastaví svůj model na stránce Chaos Mode nebo výchozí model na svém připojení (viz Nastavení, krok 4).
+- **Ve výsledcích chybí poskytovatel, kterého jste očekávali** — zkontrolujte `providerOverrides` na stránce Chaos Mode (zakázané přepsání to vylučuje) a zda je připojení poskytovatele aktivní.

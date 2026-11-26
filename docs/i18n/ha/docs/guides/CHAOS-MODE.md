@@ -4,42 +4,63 @@
 
 ---
 
-> **Allon Sarrafawa:** **Yanayin Chaos** (maɓallin gefe) → `/dashboard/chaos`  
-> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (zaman dashboard) · `POST /api/skills/collect/chaos` (maɓallin API)  
+> **Dashboard:** **Yanayin Chaos** (gefen menu) → `/dashboard/chaos`  
+> **API:** `GET` / `PUT` `/api/chaos/config` · `POST /api/chaos/run` (zaman dashboard) · `POST /api/skills/collect/chaos` (makullin API)  
 > **Tushe:** `src/lib/chaos/chaosExecutor.ts`, `src/lib/chaos/chaosConfig.ts`
 
-Yanayin Chaos yana aika **aiki guda ɗaya zuwa masu samarwa da dama a lokaci guda** — kowane mai samarwa da ke shiga
-yana bayar da samfurin ƙira guda ɗaya, kuma za ka samu duk amsoshin a jere kusa da juna (ko a sarƙafe). Wannan
-fage ne na aiwatar da ƙirarraki da dama, ba dabarar zaɓar hanya ba ce: zirga-zirgar `/v1/chat/completions`
+Yanayin Chaos yana aika **aiki guda ɗaya zuwa masu samarwa da yawa a lokaci guda** — kowane mai samarwa da ke shiga
+yana ba da gudummawar kwafin model guda ɗaya, kuma za ka sami duk amsoshin gefe da gefe (ko a jere). Wannan
+fagen aiwatar da model da yawa ne, ba dabarar turawa ba: zirga-zirgar `/v1/chat/completions`
 ta yau da kullum ba ta taɓa shafuwa da shi.
 
-**Bambance-bambance — akwai abubuwa daban-daban guda uku masu ɗauke da "chaos" a sunansu:**
+**Bambancewa — akwai abubuwa uku daban-daban da ake fitarwa tare da "chaos" a cikin sunansu:**
 
-| Abu                   | Mene ne shi                                                                                                                    | Inda aka rubuta bayaninsa                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| **Yanayin Chaos**     | Shafin dashboard + API da aka bayyana a nan: rarraba aiki guda ɗaya zuwa masu samarwa da yawa (a layi ɗaya ko na haɗin gwiwa). | Wannan jagorar                               |
-| `auto/chaos`          | Id na ƙirar Auto-Combo mai nauyin ƙididdigar shigar da kurakurai, don gwajin juriya. Babu abin da za a saita.                  | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
-| Saitin combo na Chaos | Combo da aka adana wanda `config.chaos.enabled` ke rarrabawa zuwa kwamiti tare da ƙirar alƙali ta zaɓi (API kawai).            | `open-sse/services/autoCombo/chaosEngine.ts` |
+| Abu                   | Mene ne                                                                                                                                                                                             | Inda aka rubuta bayaninsa                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **Yanayin Chaos**     | Shafin dashboard + API da aka bayyana a nan: aika aiki guda ɗaya zuwa masu samarwa da yawa (a layi ɗaya ko cikin haɗin gwiwa).                                                                      | Wannan jagorar                               |
+| `auto/chaos`          | ID ɗin model na Auto-Combo: aikawa a layi ɗaya, model guda ɗaya ga kowane mai samarwa, kiran upstream guda ɗaya kowanne. Ba shigar da matsala ba ([cikakkun bayanai](#autochaos-parallel-fan-out)). | [AUTO-COMBO.md](../routing/AUTO-COMBO.md)    |
+| Saitin combo na Chaos | Combo da aka adana wanda ke da `config.chaos.enabled` yana aikawa iri ɗaya (API kawai); `judgeModel` yana zaɓar amsar ƙarshe ne kawai, babu kiran haɗa amsoshi.                                     | `open-sse/services/autoCombo/chaosEngine.ts` |
 
-## Saitawa
+### `auto/chaos`: aikawa a layi ɗaya
 
-1. Buɗe **Dashboard → Yanayin Chaos** (`/dashboard/chaos`).
-2. **Kunna shi** — Yanayin Chaos yana zuwa ne **a kashe ta tsohuwa** (`enabled: false` a cikin
-   `src/lib/chaos/chaosConfig.ts`). Yayin da yake a kashe, `POST /api/chaos/run` yana amsawa da
-   `400 — "Ba a kunna Yanayin Chaos ba. Kunna shi a Dashboard → Yanayin Chaos."`.
-3. Zaɓi mahalarta da tsoffin saituna (ana adana su ga kowane instance ta wurin ma'ajin saituna):
+`auto/chaos` **ba** maɓallin shigar da matsala ko gwajin juriya ba ne. Neman
+`model: "auto/chaos"` a kan `/v1/chat/completions` yana:
 
-   | Fili                | Ma'ana                                                                  | Tsoho / iyakoki                                     |
-   | ------------------- | ----------------------------------------------------------------------- | --------------------------------------------------- |
-   | `enabled`           | Babban maɓallin kunnawa                                                 | `false`                                             |
-   | `defaultMode`       | `parallel` ko `collaborative` (duba ƙasa)                               | `parallel`                                          |
-   | `providerOverrides` | Shigar kowanne mai samarwa (`providerId`, `modelId` na zaɓi, `enabled`) | babu komai = kowane mai samarwa mai aiki, iyaka 200 |
-   | `systemPrompt`      | Maye gurbin umarnin tsarin Chaos da ke ciki                             | na zaɓi, iyakar haruffa 10 000                      |
-   | `timeoutMs`         | Matsakaicin lokaci ga kowane kiran ƙira                                 | `120000` (5 000–600 000)                            |
-   | `maxTokens`         | `max_tokens` ga kowane kiran ƙira                                       | `4096` (256–128 000)                                |
+1. Gina rukunin **model guda ɗaya ga kowane mai samarwa**: ɗan takara na farko daga kowane
+   mai samarwa da aka haɗa, bisa tsarin jerin ƴan takara, har zuwa mambobi 5
+   (`OMNIROUTE_CHAOS_MAX_PANEL`, wanda aka iyakance zuwa 10)
+   (`open-sse/services/autoCombo/virtualFactory.ts`). Kunshin nauyi na `chaos-mode`
+   yana saita `weight` na kowane mamba ne kawai; tsarin aikawa ba ya karanta shi.
+2. Aika buƙata iri ɗaya zuwa kowane mamban rukuni **a layi ɗaya**, don haka buƙata guda ɗaya
+   tana cin kiran upstream guda ɗaya ga kowane mamban rukuni
+   (`open-sse/services/autoCombo/chaosEngine.ts`, ana aika shi daga
+   `open-sse/services/combo.ts`).
+3. Watsa layin matsayi guda ɗaya ga kowane mamban rukuni yayin da ya iso: sharhin SSE
+   (`: chaos <index> ok|fail <model>`) ta tsohuwa, tare da event na `omni-chaos-part`
+   (`model`, `index`, `ok`, `error`) idan buƙatar ta saita
+   `stream_options.include_chaos_parts: true`. Waɗannan ba sa ɗauke da rubutun amsa.
+4. Aika amsar rukuni **guda ɗaya** a matsayin chunk na ƙarshe irin na OpenAI: ta mamban rukuni
+   na farko (`auto/chaos` yana saita shi a matsayin `judgeModel`) idan ya yi nasara, in ba haka ba
+   ta mamba na ƙarshe da ya yi nasara. Ba a dawo da sauran amsoshin rukunin, don haka
+   za ka biya kuɗin kira N kuma ka karɓi completion guda ɗaya.
 
-4. Gudanar da **gwaji daga shafin kansa** — kwamitin sakamako yana nuna amsar kowane mai samarwa,
-   matsayinta da tsawon lokacinta.
+## Saita
+
+1. Bude** Dashboard → Yanayin Hargitsi** (`/dashboard/chaos`).
+2. Juya shi** kan** — Chaos Mode jiragen ruwa** kashe ta tsohuwa** (`enabled: false` in `src/lib/chaos/chaosConfig.ts`). Yayin da aka kashe, `POST /api/chaos/run` yana amsa `400 — "Chaos Mode is not enabled. Enable it in Dashboard → Chaos Mode."`.
+3. Zaɓi mahalarta da abubuwan da ba daidai ba (an ci gaba ta kowace misali ta wurin shagon saiti):
+
+   | Filin               | Ma'ana                                                            | Default / iyaka                       |
+   | ------------------- | ----------------------------------------------------------------- | ------------------------------------- |
+   | `enabled`           | Jagoran canji                                                     | `false`                               |
+   | `defaultMode`       | `parallel` ko `collaborative` (duba ƙasa)                         | `parallel`                            |
+   | `providerOverrides` | Halartar mai bayarwa (`providerId`, `modelId` na zaɓi, `enabled`) | komai = kowane mai bada aiki, max 200 |
+   | `systemPrompt`      | Haɓaka ga ginanniyar tsarin Chaos mai faɗakarwa                   | na zaɓi, max 10 000 chars             |
+   | `timeoutMs`         | Matsakaicin lokacin kowane kiran samfurin                         | `120000` (5 000–600 000)              |
+   | `maxTokens`         | `max_tokens` kowane kira model                                    | `4096` (256–128 000)                  |
+
+4. Ba kowane mai bayarwa a** abin koyi** . Samfurin mai bada shi ne `modelId` na kunnawa ta sokewa akan shafin Yanayin Hargitsi (yana ci), in ba haka ba** tsoho samfurin** na alakarsa. Ba a taɓa amfani da id na mai bayarwa azaman sunan samfuri ba. Mai bada wanda ba shi da** ba a kira ba** : yana nunawa a cikin sakamakon kamar yadda `status: "error"` tare da saƙon _"Babu samfurin da aka saita don wannan mai ba da sabis. Sanya `modelId` don shi akan shafin Chaos Mode ko tsoho samfurin akan haɗin." Idan babu wani zaɓaɓɓen mai ba da sabis da ke da ƙira, gudu ya ƙare kafin kowane buƙatu na sama tare da _"Babu mai bayarwa da ke da saitin ƙira...."_ (HTTP 500 akan duka ƙarshen ƙarshen).
+5. Run a** gwada daga shafin kanta** — kwamitin sakamako yana nuna amsar kowane mai bada, matsayi da tsawon lokaci.
 
 ## Hanyoyin aiwatarwa
 
@@ -51,36 +72,33 @@ ta yau da kullum ba ta taɓa shafuwa da shi.
 
 ## API
 
-### `POST /api/chaos/run` — zaman dashboard
+### zaman dashboard `POST /api/chaos/run` —
 
-Ana tantancewa da cookie (zaman gudanarwa — duba
-[MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md)); shafin dashboard ne ke amfani da shi.
+Kuki-gatacce (zaman gudanarwa — duba [MANAGEMENT-AUTH.md](MANAGEMENT-AUTH.md) ); amfani da shafin dashboard.
 
 ```jsonc
-// jiki
+// body
 {
-  "task": "Kwatanta hanyoyin magance X", // dole
-  "providers": ["glm", "kimi"], // tacewa ta zaɓi
-  "mode": "parallel", // na zaɓi — yana maye gurbin defaultMode
-  "systemPrompt": "…", // maye gurbi na zaɓi
-  "maxTokens": 4096, // maye gurbi na zaɓi
+  "task": "Compare approaches to X", // required
+  "providers": ["glm", "kimi"], // optional filter
+  "mode": "parallel", // optional — overrides defaultMode
+  "systemPrompt": "…", // optional override
+  "maxTokens": 4096, // optional override
 }
 ```
 
-### `POST /api/skills/collect/chaos` — maɓallin API
+### `POST /api/skills/collect/chaos` — API key
 
-Nau'in bearer-token ne ga masu kira daga waje. Dole ne maɓallin ya ƙunshi **izinin Yanayin Chaos**
-(`chaosModeEnabled`), wanda yake **a kashe ta tsohuwa** — kunna shi ga kowane maɓalli a
-**Dashboard → Mai Gudanar da API → gyara maɓalli → izini → Yanayin Chaos**. Jikin iri ɗaya ne da na sama.
+Bambancin alamar alamar bearer don masu kira na waje. Dole ne maɓalli ya ɗauki** Izinin Yanayin Hargitsi** (`chaosModeEnabled`), wato** kashe ta tsohuwa** — kunna shi kowane maɓalli a ciki** Dashboard → API Manager → gyara maɓalli → izini → Yanayin Hargitsi** . Jiki ɗaya kamar na sama.
 
 ```bash
 curl -X POST http://localhost:20128/api/skills/collect/chaos \
   -H "Authorization: Bearer $OMNIROUTE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"task":"Kwatanta hanyoyin magance X","mode":"parallel"}'
+  -d '{"task":"Compare approaches to X","mode":"parallel"}'
 ```
 
-Duka endpoints ɗin suna mayar da tsari iri ɗaya:
+Duk wuraren ƙarshen suna dawo da siffa ɗaya:
 
 ```jsonc
 {
@@ -99,15 +117,13 @@ Duka endpoints ɗin suna mayar da tsari iri ɗaya:
       "durationMs": 3210,
     },
   ],
-  "summary": "…", // yanayin haɗin gwiwa kawai
+  "summary": "…", // collaborative mode only
 }
 ```
 
-## Magance matsaloli
+## Shirya matsala
 
-- **`400 Ba a kunna Yanayin Chaos ba`** — mataki na 2 a sama: babban maɓallin yana a kashe.
-- **An ƙi maɓallin API a `/api/skills/collect/chaos`** — maɓallin ba shi da izinin
-  `chaosModeEnabled` na kowane maɓalli (yana a kashe ta tsohuwa; wannan saiti ne, ba kuskure ba).
-- **Mai samarwar da kake tsammani ba ya cikin sakamakon** — bincika `providerOverrides` a shafin
-  Yanayin Chaos (mayewar da aka kashe tana cire shi) da kuma ko haɗin mai samarwar yana
-  aiki.
+- **`400 Chaos Mode is not enabled`** — mataki na 2 a sama: an kashe canjin duniya.
+- **API key samun ƙi akan `/api/skills/collect/chaos`** — maɓalli ba shi da izinin kowane-key `chaosModeEnabled` (kashe ta tsohuwa; wannan saitin ne, ba kuskure ba).
+- **Mai bayarwa yana nuna `No model set for this provider`** — ya saita ƙirar sa akan shafin Yanayin Chaos ko tsoho samfurin akan haɗin sa (duba Saita, mataki na 4).
+- **Mai bada da kuke tsammanin ya ɓace daga sakamakon** — duba `providerOverrides` a shafi na Yanayin Hargitsi (rasasshen sokewar ya ware shi) kuma ko haɗin mai bada yana aiki.
